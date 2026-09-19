@@ -8,18 +8,27 @@ import {
   describeAction,
   executeAction,
   explainActionFailure,
+  StaleTargetError,
   triggerKey,
   type Action,
 } from "./actions.ts";
 import type { Config } from "./config.ts";
 import { fingerprint, type Finding } from "./findings.ts";
 import { classifyJudgment, judgeStep, type Judgment } from "./judge.ts";
-import { ariaSnapshot, enumerateElements, invalidFields, isBlank } from "./page-model.ts";
+import { ariaSnapshot, enumerateElements, invalidFields, isBlank, layoutIssues } from "./page-model.ts";
 import { PERSONAS, type PersonaName } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
 import { type LiveSink, startScreencast } from "./live.ts";
 import { placeWindow, showNextAction, type WindowBounds } from "./watch.ts";
-import { type FreeResult, freeOracle, SignalCollector, summarizeSignals } from "./signals.ts";
+import {
+  type FreeCategory,
+  type FreeResult,
+  freeOracle,
+  isGatewayError,
+  NETWORK_FAILURE,
+  SignalCollector,
+  summarizeSignals,
+} from "./signals.ts";
 
 export interface JudgmentRecord {
   sessionId: string;
@@ -104,9 +113,14 @@ export async function runSession(
   // In --watch the page fills its tiled window instead of a fixed 1280x720 viewport.
   const context = await browser.newContext({
     storageState: cfg.storageStatePath,
+    // Without it, "copy" buttons fail silently in headless Chromium and look broken.
+    permissions: ["clipboard-read", "clipboard-write"],
     ...(cfg.watch ? { viewport: null } : {}),
   });
+  /** Requests the fence blocked since the last signal drain; their fallout is not an app bug. */
+  let blockedSinceDrain = 0;
   await installNetworkFence(context, cfg, (url, reason) => {
+    blockedSinceDrain++;
     if (reason === "write-in-read-only") blockedWrites.add(url);
     else blocked.add(new URL(url).host);
   });
@@ -136,6 +150,8 @@ export async function runSession(
   let trigger = "start";
   let lastAction: Action | undefined;
   let lastActionError: string | undefined;
+  /** Why an unchanged page after the last action is expected, if it is. */
+  let lastActionNote: string | undefined;
   let previousSnapshotHash: string | undefined;
 
   type FindingInput = Omit<Finding, "fingerprint" | "triggerKey" | "sessionId" | "persona" | "actionLog">;
@@ -163,15 +179,25 @@ export async function runSession(
     });
   };
 
-  const recordFree = (results: FreeResult[], url: string, step: number) => {
+  const recordFree = (results: FreeResult[], url: string, step: number, fenceBlocked = 0) => {
     for (const r of results) {
-      const level = cfg.freeOracleFailOn.includes(r.category) ? "fail" : "warn";
+      // A page that reports "Failed to fetch" right after our fence aborted one of its requests is
+      // reacting to the test harness. Keep it visible, but not as an app error.
+      const fenceEffect = fenceBlocked > 0 && /error$/.test(r.category) && NETWORK_FAILURE.test(r.message);
+      const category = fenceEffect ? "fence-side-effect" : r.category;
+      const message = fenceEffect ? `${r.message} (likely caused by the test's network fence blocking a request)` : r.message;
+      const level = !fenceEffect && cfg.freeOracleFailOn.includes(r.category) ? "fail" : "warn";
       record(
-        { category: r.category, source: "free", level, message: r.message, url, trigger, step },
-        { shape: r.shape, pageIndependent: r.pageIndependent },
+        { category, source: "free", level, message, url, trigger, step },
+        { shape: r.shape, pageIndependent: r.pageIndependent, triggerIndependent: r.triggerIndependent },
       );
     }
   };
+  const recordCode = (category: FreeCategory, message: string, url: string, step: number, opts: FingerprintOptions) =>
+    record(
+      { category, source: "free", level: cfg.freeOracleFailOn.includes(category) ? "fail" : "warn", message, url, trigger, step },
+      opts,
+    );
 
   try {
     await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
@@ -197,8 +223,12 @@ export async function runSession(
 
       // 1. Free oracle: code-only checks, before any model call.
       const signals = collector.drain();
-      recordFree(freeOracle(signals, await isBlank(page)), url, step);
+      const fenceBlocked = blockedSinceDrain;
+      blockedSinceDrain = 0;
+      recordFree(freeOracle(signals, await isBlank(page)), url, step, fenceBlocked);
       if (signals.crashed) break;
+      // While the service is down, every page is the outage page; judging it again is noise.
+      const outage = signals.httpErrors.some((e) => isGatewayError(e.status));
 
       // 2. Capture state.
       const snapshot = await ariaSnapshot(page, cfg.maxSnapshotChars);
@@ -212,8 +242,41 @@ export async function runSession(
         log.warn(`[${sessionId}] element enumeration failed at step ${step}: ${err.message.split("\n")[0]}`);
         return [];
       });
+      // Code-only structural checks on what was just enumerated.
+      const covers = new Map<string, string[]>();
+      for (const el of elements) {
+        if (el.coveredBy && !el.coveredByModal) covers.set(el.coveredBy, [...(covers.get(el.coveredBy) ?? []), `${el.role} "${el.name}"`]);
+        if (el.anchor === "missing") {
+          recordCode("broken-anchor", `Link ${el.role} "${el.name}" points to ${new URL(el.href!).hash}, which is not on the page`, url, step, {
+            shape: new URL(el.href!).hash,
+            triggerIndependent: true,
+          });
+        }
+      }
+      for (const [cover, controls] of covers) {
+        recordCode("covered-control", `"${cover}" covers ${controls.length} control(s) that no scroll position reveals, e.g. ${controls.slice(0, 3).join(", ")}`, url, step, {
+          shape: cover.replace(/\d+/g, "#"),
+          pageIndependent: true,
+          triggerIndependent: true,
+        });
+      }
+      const layout = await layoutIssues(page);
+      if (layout.horizontalOverflow) {
+        const { px, culprits } = layout.horizontalOverflow;
+        recordCode("horizontal-overflow", `Page is ${px}px wider than the viewport; sticking out: ${culprits.join(", ") || "unknown"}`, url, step, {
+          triggerIndependent: true,
+        });
+      }
+      for (const clipped of layout.clipped) {
+        recordCode("clipped-text", `Text is cut off without an ellipsis: "${clipped}"`, url, step, {
+          shape: clipped.replace(/\d+/g, "#"),
+          triggerIndependent: true,
+        });
+      }
+
       const { actions, skipped } = candidateActions({
         persona: personaName,
+        currentUrl: url,
         elements,
         visited,
         isForbidden,
@@ -226,9 +289,11 @@ export async function runSession(
       const flagged: string[] = [];
       const observed = lastActionError
         ? `the action failed: ${lastActionError}`
-        : unchanged && step > 0
-          ? "the page did not change after the last action"
-          : "the page changed";
+        : lastActionNote
+          ? lastActionNote
+          : unchanged && step > 0
+            ? "the page did not change after the last action"
+            : "the page changed";
       if (client) {
         const state = {
           persona: persona.strategy,
@@ -248,7 +313,7 @@ export async function runSession(
         const notes = (a: Action) => actionNotes(a, tried, visited);
         try {
           const j = await judgeStep(client, state, actions, persona, notes, random);
-          for (const issue of classifyJudgment(j, cfg.thresholds)) {
+          for (const issue of outage ? [] : classifyJudgment(j, cfg.thresholds)) {
             record({ ...issue, source: "judgment", url, trigger, step, observed });
             flagged.push(`${issue.level === "fail" ? "FAIL" : "warn"} ${issue.category} ${issue.confidence.toFixed(2)}`);
           }
@@ -293,9 +358,14 @@ export async function runSession(
       const sig = actionSignature(action);
       tried.set(sig, (tried.get(sig) ?? 0) + 1);
       lastActionError = undefined;
+      lastActionNote = expectedNoChange(action);
       try {
         await executeAction(page, action, cfg.actionTimeoutMs);
       } catch (err) {
+        if (err instanceof StaleTargetError) {
+          lastActionNote = `nothing was clicked: the targeted element re-rendered before the click (a test-harness timing issue, not an app bug)`;
+          continue;
+        }
         const failure = explainActionFailure(err as Error);
         lastActionError = failure.summary;
         if (failure.interceptedBy) {
@@ -317,7 +387,7 @@ export async function runSession(
     }
     // Signals from the final action.
     await settle(page, personaName);
-    recordFree(freeOracle(collector.drain(), false), page.url(), cfg.steps);
+    recordFree(freeOracle(collector.drain(), false), page.url(), cfg.steps, blockedSinceDrain);
   } catch (err) {
     log.warn(`[${sessionId}] session ended early: ${(err as Error).message.split("\n")[0]}`);
   } finally {
@@ -338,6 +408,13 @@ export async function runSession(
   return result;
 }
 
+/** Actions after which an unchanged page is the correct outcome, and why, for the model's state. */
+function expectedNoChange(a: Action): string | undefined {
+  if (a.inPage) return "the link jumps to a section of the current page, so the page content is not expected to change";
+  if (a.kind === "dblclick") return "a double-click on a control that toggles returns it to its original state, so no change may be expected";
+  return undefined;
+}
+
 function describeTarget(a: Action): string {
   return a.role ? `${a.role} "${a.name ?? ""}"` : "the target";
 }
@@ -356,7 +433,8 @@ function actionNotes(a: Action, tried: Map<string, number>, visited: readonly st
   const count = tried.get(actionSignature(a)) ?? 0;
   const notes: string[] = [];
   if (count) notes.push(`tried ${count}x`);
-  if (a.href && !visited.includes(a.href)) notes.push("leads to an unvisited page");
+  if (a.inPage) notes.push("jumps within this page");
+  else if (a.href && !visited.includes(a.href)) notes.push("leads to an unvisited page");
   return notes.length ? ` (${notes.join(", ")})` : "";
 }
 

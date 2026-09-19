@@ -24,6 +24,14 @@ export interface InteractiveElement {
   href?: string;
   /** For comboboxes: the option values. */
   options?: string[];
+  /** A form's submit button: where double submits and navigate-away races matter. */
+  submit?: boolean;
+  /** For "#section" links on the current page: whether the target section exists. */
+  anchor?: "ok" | "missing";
+  /** Something that no scroll position can move out of the way sits on top of this control. */
+  coveredBy?: string;
+  /** The cover is an intentional modal dialog (the control is still unclickable, but not a bug). */
+  coveredByModal?: boolean;
 }
 
 /**
@@ -73,6 +81,42 @@ const ENUMERATE_SCRIPT = String.raw`(attr) => {
         el.getAttribute("name"),
     ).slice(0, 80);
   };
+  const describe = (el) =>
+    text(el.getAttribute("aria-label") || el.innerText || "").slice(0, 60) ||
+    (el.id ? "#" + el.id : el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : ""));
+
+  const pinned = (el) => {
+    for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
+      const pos = getComputedStyle(e).position;
+      if (pos === "fixed" || pos === "sticky") return e;
+    }
+    return null;
+  };
+  const MODAL = "dialog[open], [aria-modal=true], [role=dialog], [role=alertdialog]";
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+
+  // Covered = the element that would receive a click at the control's center is unrelated to it,
+  // and no scroll position moves the control out from under it (a sticky header over content you
+  // can scroll past is fine; a fixed banner over the last footer links is not).
+  const coverOf = (el, rect) => {
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) return null;
+    const hit = document.elementFromPoint(cx, cy);
+    if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+    const layer = pinned(hit);
+    if (layer && !pinned(el)) {
+      const c = layer.getBoundingClientRect();
+      const docCy = cy + scrollY;
+      const lo = Math.max(0, docCy - maxScroll);
+      const hi = Math.min(innerHeight, docCy);
+      const reachable = lo < c.top || hi > c.bottom;
+      if (reachable) return null;
+    }
+    return { by: describe(layer || hit), modal: !!hit.closest(MODAL) };
+  };
+
+  const SUBMIT_NAME = /\b(save|send|submit|place|order|book|create|add|confirm|pay|register|sign ?up|apply|continue|next|spara|skicka|boka|skapa|bekr)/i;
 
   for (const el of document.querySelectorAll("[" + attr + "]")) el.removeAttribute(attr);
 
@@ -88,13 +132,24 @@ const ENUMERATE_SCRIPT = String.raw`(attr) => {
     const id = "e" + i++;
     el.setAttribute(attr, id);
     const role = roleOf(el);
+    const name = nameOf(el);
+    const cover = coverOf(el, rect);
+    let anchor;
+    if (el instanceof HTMLAnchorElement && el.hash && el.pathname === location.pathname && el.origin === location.origin) {
+      const target = decodeURIComponent(el.hash.slice(1));
+      anchor = !target || document.getElementById(target) || document.getElementsByName(target).length ? "ok" : "missing";
+    }
     out.push({
       id,
       role,
-      name: nameOf(el),
+      name,
       inputType: role === "textbox" ? el.type || "text" : undefined,
       href: el instanceof HTMLAnchorElement ? el.href : undefined,
       options: el instanceof HTMLSelectElement ? [...el.options].map((o) => o.value).slice(0, 10) : undefined,
+      submit: role === "button" && ((el.form && (el.type === "submit" || el.type === "image")) || SUBMIT_NAME.test(name)) || undefined,
+      anchor,
+      coveredBy: cover ? cover.by : undefined,
+      coveredByModal: cover ? cover.modal : undefined,
     });
   }
   return out;
@@ -106,6 +161,58 @@ const ENUMERATE_SCRIPT = String.raw`(attr) => {
  */
 export async function enumerateElements(page: Page): Promise<InteractiveElement[]> {
   return page.evaluate(`(${ENUMERATE_SCRIPT})(${JSON.stringify(TARGET_ATTR)})`) as Promise<InteractiveElement[]>;
+}
+
+export interface LayoutIssues {
+  /** Pixels the page is wider than the viewport, and what sticks out. */
+  horizontalOverflow?: { px: number; culprits: string[] };
+  /** Text cut off by overflow:hidden without an ellipsis. */
+  clipped: string[];
+}
+
+const LAYOUT_SCRIPT = String.raw`() => {
+  const text = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const describe = (el) =>
+    text(el.getAttribute("aria-label") || el.innerText || "").slice(0, 60) ||
+    (el.id ? "#" + el.id : el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : ""));
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const st = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none";
+  };
+
+  const result = { clipped: [] };
+  const root = document.documentElement;
+  const bodyStyle = getComputedStyle(document.body);
+  const overflowPx = root.scrollWidth - innerWidth;
+  if (overflowPx > 1 && bodyStyle.overflowX !== "hidden" && getComputedStyle(root).overflowX !== "hidden") {
+    const culprits = [];
+    for (const el of document.body.querySelectorAll("*")) {
+      if (culprits.length >= 3) break;
+      const r = el.getBoundingClientRect();
+      // The innermost element sticking out, not every ancestor that contains it.
+      if (r.right > innerWidth + 1 && visible(el) && ![...el.children].some((c) => c.getBoundingClientRect().right > innerWidth + 1)) {
+        culprits.push(describe(el));
+      }
+    }
+    result.horizontalOverflow = { px: Math.round(overflowPx), culprits };
+  }
+
+  const TEXTY = "a, button, label, h1, h2, h3, h4, h5, h6, p, span, td, th, li, dt, dd";
+  let checked = 0;
+  for (const el of document.querySelectorAll(TEXTY)) {
+    if (checked++ > 1500 || result.clipped.length >= 10) break;
+    if (![...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim())) continue;
+    const st = getComputedStyle(el);
+    if (!["hidden", "clip"].includes(st.overflowX) || st.textOverflow === "ellipsis") continue;
+    if (el.scrollWidth > el.clientWidth + 1 && visible(el)) result.clipped.push(describe(el));
+  }
+  return result;
+}`;
+
+/** Code-only layout checks: horizontal page overflow and clipped text. */
+export async function layoutIssues(page: Page): Promise<LayoutIssues> {
+  return (page.evaluate(`(${LAYOUT_SCRIPT})()`) as Promise<LayoutIssues>).catch(() => ({ clipped: [] }));
 }
 
 /** Semantic ARIA snapshot of the page: small, and stable across CSS changes. */

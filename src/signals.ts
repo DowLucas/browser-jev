@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { normalizeRequestPath } from "./findings.ts";
 
 /** Marker embedded in injection-shaped input; a dialog carrying it means script injection executed. */
 export const XSS_MARKER = "jev-xss";
@@ -11,7 +12,13 @@ export type FreeCategory =
   | "crash"
   | "blank-render"
   | "xss-dialog"
-  | "click-intercepted";
+  | "click-intercepted"
+  | "service-unavailable"
+  | "covered-control"
+  | "clipped-text"
+  | "horizontal-overflow"
+  | "broken-anchor"
+  | "fence-side-effect";
 
 export interface HttpError {
   method: string;
@@ -38,7 +45,15 @@ export interface FreeResult {
    * click can be reported after the page has already navigated away.
    */
   pageIndependent?: boolean;
+  /** The finding is identified by its shape, not the action that surfaced it. */
+  triggerIndependent?: boolean;
 }
+
+/** Gateway errors mean the service itself was unavailable, not that one endpoint is broken. */
+export const isGatewayError = (status: number) => status === 502 || status === 503 || status === 504;
+
+/** Network-level failures a page reports when a request it made was aborted, e.g. by our fence. */
+export const NETWORK_FAILURE = /Failed to fetch|NetworkError when attempting|Load failed|ERR_BLOCKED_BY_CLIENT/i;
 
 const DUPLICATE_CONSOLE_ERRORS = [
   // Our own network fence; blocked hosts are reported separately.
@@ -105,11 +120,24 @@ export function freeOracle(signals: Signals, blankRender: boolean): FreeResult[]
     const message = firstLine(stack);
     results.push({ category: "page-error", message, shape: message.replace(/\d+/g, "#"), pageIndependent: true });
   }
-  for (const err of signals.httpErrors) {
+  // One finding for an outage, however many requests it failed: that is one root cause.
+  const gateway = signals.httpErrors.filter((e) => isGatewayError(e.status));
+  if (gateway.length) {
+    const statuses = [...new Set(gateway.map((e) => e.status))].join("/");
+    const first = gateway[0]!;
+    results.push({
+      category: "service-unavailable",
+      message: `${gateway.length} request(s) returned ${statuses}, e.g. ${first.method} ${new URL(first.url).pathname}`,
+      shape: "gateway",
+      pageIndependent: true,
+      triggerIndependent: true,
+    });
+  }
+  for (const err of signals.httpErrors.filter((e) => !isGatewayError(e.status))) {
     results.push({
       category: err.status >= 500 ? "http-5xx" : "http-4xx",
       message: `${err.method} ${err.url} -> ${err.status}`,
-      shape: `${err.method} ${new URL(err.url).pathname}`,
+      shape: `${err.method} ${normalizeRequestPath(err.url)}`,
     });
   }
   for (const message of signals.dialogs) {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { candidateActions, explainActionFailure, triggerKey } from "../src/actions.ts";
 import { type Config, DEFAULTS, resolveConfig } from "../src/config.ts";
-import { FindingStore, fingerprint, normalizePath, type Finding } from "../src/findings.ts";
+import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
 import { assertSafeTarget, forbiddenMatcher, isAllowedUrl, SafetyError } from "../src/safety.ts";
@@ -73,9 +73,20 @@ describe("candidate actions", () => {
     { id: "e1", role: "link", name: "Delete account", href: "http://127.0.0.1/account/delete" },
     { id: "e2", role: "link", name: "Bye", href: "http://127.0.0.1/logout" },
     { id: "e3", role: "textbox", name: "Name", inputType: "text" },
-    { id: "e4", role: "button", name: "Save" },
+    { id: "e4", role: "button", name: "Save", submit: true },
+    { id: "e5", role: "button", name: "Show details" },
+    { id: "e6", role: "link", name: "Home", href: "http://127.0.0.1/start" },
+    { id: "e7", role: "link", name: "Pricing section", href: "http://127.0.0.1/start#pricing" },
+    { id: "e8", role: "link", name: "Privacy", href: "http://127.0.0.1/privacy", coveredBy: "We use cookies" },
   ];
-  const base = { elements, visited: [], isForbidden: forbiddenMatcher(DEFAULTS.forbiddenPatterns), maxActions: 100, random: () => 0.3 };
+  const base = {
+    elements,
+    currentUrl: "http://127.0.0.1/start",
+    visited: [],
+    isForbidden: forbiddenMatcher(DEFAULTS.forbiddenPatterns),
+    maxActions: 100,
+    random: () => 0.3,
+  };
 
   it("skips forbidden controls by name and by href", () => {
     const { actions, skipped } = candidateActions({ ...base, persona: "completionist" });
@@ -83,11 +94,20 @@ describe("candidate actions", () => {
     assert.ok(!actions.some((a) => a.target === "e1" || a.target === "e2"));
   });
 
-  it("gives the sloppy persona adversarial inputs and the impatient persona double clicks", () => {
+  it("gives the sloppy persona adversarial inputs and the impatient persona double clicks on submits only", () => {
     const sloppy = candidateActions({ ...base, persona: "sloppy" }).actions.filter((a) => a.kind === "fill");
     assert.ok(sloppy.length > 1);
     const impatient = candidateActions({ ...base, persona: "impatient" }).actions;
-    assert.ok(impatient.some((a) => a.kind === "dblclick"));
+    assert.ok(impatient.some((a) => a.kind === "dblclick" && a.name === "Save"));
+    assert.ok(!impatient.some((a) => a.kind !== "click" && a.name === "Show details"));
+  });
+
+  it("leaves out links to the current page and covered controls, and marks in-page anchors", () => {
+    const { actions } = candidateActions({ ...base, persona: "completionist" });
+    const names = actions.map((a) => a.name);
+    assert.ok(!names.includes("Home"), "self-link");
+    assert.ok(!names.includes("Privacy"), "covered");
+    assert.equal(actions.find((a) => a.name === "Pricing section")?.inPage, true);
   });
 
   it("caps the action count while keeping navigation actions", () => {
@@ -223,6 +243,42 @@ describe("window tiling", () => {
     assert.deepEqual(tiles[0], { left: 0, top: 0, width: 1146, height: 720 });
     assert.deepEqual(tiles[4], { left: 1146, top: 720, width: 1146, height: 720 });
     for (const t of tiles) assert.ok(t.left + t.width <= screen.width && t.top + t.height <= screen.height);
+  });
+});
+
+describe("root-cause grouping", () => {
+  const signals = (httpErrors: { method: string; url: string; status: number }[]) => ({
+    consoleErrors: [],
+    pageErrors: [],
+    httpErrors,
+    dialogs: [],
+    crashed: false,
+  });
+
+  it("turns any number of gateway errors into one service-unavailable finding", () => {
+    const results = freeOracle(
+      signals([
+        { method: "GET", url: "https://app.test/home", status: 503 },
+        { method: "GET", url: "https://app.test/_next/static/chunks/c1cf3-8a2e91.js", status: 503 },
+        { method: "GET", url: "https://app.test/api/branding/logo", status: 502 },
+      ]),
+      false,
+    );
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.category, "service-unavailable");
+    assert.match(results[0]!.message, /3 request\(s\) returned 503\/502/);
+    assert.equal(results[0]?.pageIndependent && results[0]?.triggerIndependent, true);
+  });
+
+  it("keeps a plain 500 per endpoint, with hashed asset names collapsed", () => {
+    const [chunk] = freeOracle(signals([{ method: "GET", url: "https://app.test/_next/static/chunks/c1cf3-8a2e91.js?dpl=9", status: 500 }]), false);
+    assert.equal(chunk?.category, "http-5xx");
+    assert.equal(chunk?.shape, "GET /_next/static/chunks/*.js");
+  });
+
+  it("collapses build-hashed asset paths but leaves pages alone", () => {
+    assert.equal(normalizeRequestPath("https://a.test/_next/static/css/4fd2d3b9a1.css"), "/_next/static/css/*.css");
+    assert.equal(normalizeRequestPath("https://a.test/orders/42"), "/orders/:id");
   });
 });
 

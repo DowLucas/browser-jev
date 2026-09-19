@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import { TARGET_ATTR, type InteractiveElement } from "./page-model.ts";
 import type { PersonaName } from "./personas.ts";
 import { XSS_MARKER } from "./signals.ts";
@@ -25,6 +25,8 @@ export interface Action {
   /** Human label for `value`, e.g. "600 chars"; keeps descriptions and fingerprints short. */
   valueLabel?: string;
   url?: string;
+  /** A "#section" link on the current page: it scrolls, so an unchanged page is expected. */
+  inPage?: boolean;
 }
 
 interface FillValue {
@@ -56,6 +58,8 @@ const PLAUSIBLE_INPUTS: Record<string, string> = {
 export interface CandidateContext {
   persona: PersonaName;
   elements: InteractiveElement[];
+  /** The page the elements are on; links back to it are left out. */
+  currentUrl: string;
   /** URLs visited in this session, oldest first. */
   visited: string[];
   isForbidden: (text: string) => boolean;
@@ -68,12 +72,18 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
   const actions: Action[] = [];
   let skipped = 0;
 
+  const here = withoutHash(ctx.currentUrl);
   for (const el of ctx.elements) {
     if (ctx.isForbidden(el.name) || (el.href && ctx.isForbidden(el.href))) {
       skipped++;
       continue;
     }
-    const base = { target: el.id, role: el.role, name: el.name, href: el.href };
+    // A covered control cannot be clicked; the cover itself is reported as a finding.
+    if (el.coveredBy) continue;
+    const inPage = el.href !== undefined && withoutHash(el.href) === here;
+    // A link to the page we are on tests nothing and reads as "the click did nothing".
+    if (inPage && (!new URL(el.href!).hash || el.href === ctx.currentUrl)) continue;
+    const base = { target: el.id, role: el.role, name: el.name, href: el.href, ...(inPage ? { inPage } : {}) };
     switch (el.role) {
       case "textbox":
         for (const v of fillValues(ctx.persona, el.inputType, ctx.random)) {
@@ -87,7 +97,9 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
         break;
       case "button":
         actions.push({ ...base, kind: "click" });
-        if (ctx.persona === "impatient") {
+        // Double submits and navigate-away races live on submit buttons. On a toggle, a
+        // double-click just restores the original state, which reads as "did nothing".
+        if (ctx.persona === "impatient" && el.submit) {
           actions.push({ ...base, kind: "dblclick" }, { ...base, kind: "click-and-leave" });
         }
         break;
@@ -103,6 +115,16 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
   }
 
   return { actions: capActions(actions, ctx.maxActions, ctx.random), skipped };
+}
+
+function withoutHash(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = "";
+    return u.href;
+  } catch {
+    return url;
+  }
 }
 
 function fillValues(persona: PersonaName, inputType = "text", random: () => number): FillValue[] {
@@ -193,21 +215,41 @@ export function explainActionFailure(err: Error): ActionFailure {
   return { summary: `the click was blocked by an overlapping element "${interceptedBy}"`, interceptedBy };
 }
 
+/** The element this step chose is gone: the page re-rendered between choosing and clicking. */
+export class StaleTargetError extends Error {}
+
+const ARIA_ROLES = new Set(["link", "button", "textbox", "combobox", "checkbox", "radio", "tab", "menuitem", "switch", "option"]);
+
+/**
+ * The stamped element if it still exists; frameworks that re-render or hydrate replace DOM nodes
+ * and drop our stamp, so fall back to the same role and exact accessible name. If neither exists,
+ * the target really is gone, which is a harness timing issue, not an app failure.
+ */
+async function resolveTarget(page: Page, a: Action): Promise<Locator> {
+  const stamped = page.locator(`[${TARGET_ATTR}="${a.target}"]`);
+  if (await stamped.count()) return stamped;
+  if (a.role && ARIA_ROLES.has(a.role) && a.name) {
+    const byRole = page.getByRole(a.role as Parameters<Page["getByRole"]>[0], { name: a.name, exact: true });
+    if (await byRole.count()) return byRole.first();
+  }
+  throw new StaleTargetError(`${describeAction(a)}: the element re-rendered before the click and no longer exists`);
+}
+
 export async function executeAction(page: Page, a: Action, timeout: number): Promise<void> {
-  const target = () => page.locator(`[${TARGET_ATTR}="${a.target}"]`);
+  const target = () => resolveTarget(page, a);
   switch (a.kind) {
     case "click":
-      return target().click({ timeout });
+      return (await target()).click({ timeout });
     case "dblclick":
-      return target().dblclick({ timeout });
+      return (await target()).dblclick({ timeout });
     case "click-and-leave":
-      await target().click({ timeout });
+      await (await target()).click({ timeout });
       await page.goBack({ waitUntil: "commit", timeout });
       return;
     case "fill":
-      return target().fill(a.value ?? "", { timeout });
+      return (await target()).fill(a.value ?? "", { timeout });
     case "select":
-      await target().selectOption(a.value ?? "", { timeout });
+      await (await target()).selectOption(a.value ?? "", { timeout });
       return;
     case "back":
       await page.goBack({ timeout });

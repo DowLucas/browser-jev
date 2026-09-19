@@ -53,6 +53,20 @@ export function normalizePath(url: string): string {
     .join("/");
 }
 
+const STATIC_ASSET = /\.(js|mjs|css|map|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|avif|ico)$/i;
+
+/**
+ * Request path for grouping: normalizePath, plus build-hashed asset names collapsed to `*.ext`,
+ * so `/_next/static/chunks/c1cf3-8a2e.js` and every other chunk in that folder are one shape.
+ */
+export function normalizeRequestPath(url: string): string {
+  const path = normalizePath(url);
+  if (!STATIC_ASSET.test(path)) return path;
+  const slash = path.lastIndexOf("/");
+  const ext = path.slice(path.lastIndexOf("."));
+  return `${path.slice(0, slash + 1)}*${ext}`;
+}
+
 /** Fingerprint on the shape of a finding (category, normalized path, trigger), never on its text. */
 export function fingerprint(parts: { category: string; url: string; triggerKey: string; shape?: string }): string {
   const key = [parts.category, normalizePath(parts.url), parts.triggerKey, parts.shape ?? ""].join("\n");
