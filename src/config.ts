@@ -6,8 +6,13 @@ import type { FreeCategory } from "./signals.ts";
 export interface Thresholds {
   /** Minimum yes-probability for a judgment to be reported at all (as a warning). */
   warnConfidence: number;
-  /** Minimum expected severity (0-4 rubric) for a judgment to be reported; below 1 the model itself rates it "nothing is wrong". */
+  /**
+   * In the uncertain band (warnConfidence up to strongConfidence), a judgment must also reach this
+   * expected severity (0-4); below 1 the model itself rates it "nothing is wrong". Judgments at or
+   * above strongConfidence are reported regardless: a confident dead end can still be rated minor.
+   */
   warnSeverity: number;
+  strongConfidence: number;
   /** Minimum yes-probability for a judgment to fail the build. */
   failConfidence: number;
   /** Minimum expected severity (0-4 rubric) for a judgment to fail the build. */
@@ -88,7 +93,7 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   steps: 25,
   personas: [...PERSONA_NAMES],
   useModel: true,
-  thresholds: { warnConfidence: 0.6, warnSeverity: 1, failConfidence: 0.9, failSeverity: 3 },
+  thresholds: { warnConfidence: 0.6, warnSeverity: 1, strongConfidence: 0.75, failConfidence: 0.9, failSeverity: 3 },
   freeOracleFailOn: ["page-error", "http-5xx", "crash", "xss-dialog"],
   outDir: "out",
   maxSnapshotChars: 60_000,

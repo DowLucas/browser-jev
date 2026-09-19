@@ -221,8 +221,11 @@ describe("thresholds", () => {
     inputTokens: 0,
   });
 
-  it("does not report what the model itself rates as nothing wrong (severity below 1)", () => {
-    assert.equal(classifyJudgment(judgment(0.7, 0.49), DEFAULTS.thresholds).length, 0);
+  it("drops uncertain judgments the model rates as nothing wrong, but keeps confident minor ones", () => {
+    // Real-site false positive: leaks-internals at p=0.60, severity 0.49 ("nothing is wrong").
+    assert.equal(classifyJudgment(judgment(0.6, 0.49), DEFAULTS.thresholds).length, 0);
+    // Planted dead end: p=0.83 but rated minor (0.72). Dropping it was a recall regression.
+    assert.equal(classifyJudgment(judgment(0.83, 0.72), DEFAULTS.thresholds)[0]?.level, "warn");
   });
 
   it("fails only on high confidence and high severity; warns in the band", () => {

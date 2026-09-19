@@ -14,7 +14,8 @@
     "jev:check": "tsx --env-file-if-exists=.env scripts/jev-check.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "runner": "tsx src/runner/server.ts"
+    "runner": "tsx src/runner/server.ts",
+    "bench": "tsx --env-file-if-exists=.env scripts/recall-bench.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",

@@ -11,6 +11,7 @@ npm install
 npx playwright install chromium
 echo "TYPESAFE_API_KEY=..." > .env   # gitignored; npm scripts load it
 npm run jev:check          # one tiny call to verify the key and question shapes
+npm run bench              # recall on the demo app's planted bugs (needs npm run demo:server)
 ```
 
 ## Run
