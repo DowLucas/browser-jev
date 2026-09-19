@@ -37,6 +37,9 @@ const cfg = resolveConfig({
   sessions: Number(values.sessions ?? 12),
   workers: 6,
   steps: Number(values.steps ?? 25),
+  // The demo app is disposable, and some planted bugs only show once a submission reaches it.
+  mode: "interact",
+  confirmDisposable: true,
 });
 const browser = await chromium.launch();
 const outDir = await mkdtemp(join(tmpdir(), "jev-bench-"));

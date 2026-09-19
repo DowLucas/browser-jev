@@ -62,6 +62,13 @@
   .checks { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text); font-size: 13px; }
   .checks label { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 13px; }
   .error { color: var(--fail); font-size: 13px; }
+  fieldset.modes { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
+  fieldset.modes legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+  label.mode { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 13px; }
+  label.mode b { font-weight: 600; }
+  label.danger { display: flex; gap: 8px; align-items: center; color: var(--fail); font-size: 13px; font-weight: 600; }
+  .mode-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+  .mode-tag.interact { color: var(--fail); border-color: rgba(248,81,73,.5); }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 24px 0 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
@@ -115,9 +122,21 @@
           <label><input type="checkbox" name="persona" value="out-of-order" checked> out-of-order</label>
           <label><input type="checkbox" name="persona" value="completionist" checked> completionist</label>
           <span style="width:16px"></span>
-          <label><input type="checkbox" name="readOnly" checked> read-only (block all writes)</label>
           <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
         </div>
+        <fieldset class="modes" style="grid-column:1/-1">
+          <legend>Mode: what may reach the server</legend>
+          <label class="mode"><input type="radio" name="mode" value="observe" checked>
+            <span><b>Observe</b>: clicks, types and submits, but only page loads and reads reach the server. Safe on live sites.</span></label>
+          <label class="mode"><input type="radio" name="mode" value="observe-writes">
+            <span><b>Observe + allowed writes</b>: as Observe, plus writes to the paths you list. For apps that load data with POST requests.</span></label>
+          <label class="mode"><input type="radio" name="mode" value="interact">
+            <span><b>Interact</b>: every submission goes through for real: orders, messages, sign-ups. Disposable environments only.</span></label>
+          <label id="write-paths" hidden>Allowed write paths (comma-separated; exact, or ending in /* for everything below)
+            <input type="text" name="allowedWritePaths" placeholder="/entity, /search, /api/*"></label>
+          <label id="confirm" class="danger" hidden><input type="checkbox" name="confirmDisposable">
+            I confirm this is a disposable environment: this run will change data on it.</label>
+        </fieldset>
         <div style="display:flex;gap:10px;align-items:center;grid-column:1/-1">
           <button class="primary">Start run</button>
           <span class="error" id="run-error"></span>
@@ -159,6 +178,15 @@ $("login-form").addEventListener("submit", async (e) => {
 
 $("toggle-form").addEventListener("click", () => { $("new-run").hidden = !$("new-run").hidden; });
 
+// Show only what the chosen mode needs.
+document.querySelectorAll("input[name=mode]").forEach((radio) =>
+  radio.addEventListener("change", () => {
+    const mode = new FormData($("run-form")).get("mode");
+    $("write-paths").hidden = mode !== "observe-writes";
+    $("confirm").hidden = mode !== "interact";
+  }),
+);
+
 $("run-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -169,9 +197,13 @@ $("run-form").addEventListener("submit", async (e) => {
     workers: Number(f.get("workers")),
     steps: Number(f.get("steps")),
     personas: f.getAll("persona"),
-    readOnly: f.get("readOnly") === "on",
     useModel: f.get("useModel") === "on",
+    mode: f.get("mode"),
   };
+  if (request.mode === "observe-writes") {
+    request.allowedWritePaths = f.get("allowedWritePaths").split(",").map((p) => p.trim()).filter(Boolean);
+  }
+  if (request.mode === "interact") request.confirmDisposable = f.get("confirmDisposable") === "on";
   if (f.get("authState").trim()) request.authState = f.get("authState").trim();
   $("run-error").textContent = "";
   try {
@@ -274,7 +306,9 @@ async function refreshRuns() {
     const started = j.startedAt ? new Date(j.startedAt).toLocaleTimeString() : "–";
     const report = o ? `<a href="/runs/${j.id}/report" target="_blank">report</a>` : "";
     const cancel = ["queued", "running"].includes(j.status) ? `<button data-cancel="${j.id}">cancel</button>` : "";
-    return `<tr><td class="status ${j.status}">${j.status}</td><td>${esc(j.request.startUrl)}</td>` +
+    const mode = j.request.mode ?? "observe";
+    return `<tr><td class="status ${j.status}">${j.status}</td>` +
+      `<td>${esc(j.request.startUrl)}<span class="mode-tag ${mode}">${esc(mode)}</span></td>` +
       `<td>${o ? o.sessionsRun : "–"}/${j.request.sessions ?? 4}</td><td>${findings}</td><td>${started}</td><td>${report} ${cancel}</td></tr>`;
   }).join("");
 }

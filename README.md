@@ -41,6 +41,23 @@ Each run writes to `out/run-<timestamp>/`:
 
 The exit code is 1 if any non-baselined finding fails, so the run can gate CI.
 
+## Modes: what may reach the server
+
+The tester always clicks, types and submits. The mode decides which of the resulting requests reach the server:
+
+| Mode | Writes that reach the server | Use for |
+|---|---|---|
+| `observe` (default) | None: POST/PUT/DELETE and WebSockets are blocked | Live sites, and a first look at anything |
+| `observe-writes` | Only listed paths: exact (`/entity`), or a prefix ending in `/*` (`/api/*`) | Apps that load data with POST (e.g. Next.js server actions, GraphQL queries) |
+| `interact` | All of them, after an explicit per-run confirmation that the environment is disposable | Staging with throwaway data: finds double submits and server-side validation bugs |
+
+```sh
+npm run explore -- --url https://staging.example.dev/ --mode observe-writes --allow-write /entity --allow-write /api/*
+npm run explore -- --url https://staging.example.dev/ --mode interact --confirm-disposable
+```
+
+The forbidden-controls list and the production-hostname check apply in every mode. Every report lists the writes that were sent and the ones that were blocked.
+
 ## Runner service (queue + HTTP API)
 
 `src/runner/server.ts` runs exploration jobs from a queue on one shared browser. A global cap on open browser contexts (`RUNNER_CONTEXTS`) is the memory limit. Free slots rotate between active runs, so a big run can't starve a small one. Jobs are files on disk: a restart re-queues whatever was running, and `SIGTERM` lets runs finish their current step and keep their reports.

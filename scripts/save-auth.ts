@@ -4,7 +4,7 @@
 //
 // Opens a visible browser at <url>. Log in by hand, then close the window. The session is saved
 // and re-checked, and the hosts and request methods the app used are printed, so the explorer's
-// allowlist and read-only mode can be set to match the app.
+// allowlist and mode (e.g. observe-writes paths for apps that read via POST) can be set to match.
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { chromium } from "playwright";

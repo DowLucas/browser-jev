@@ -5,7 +5,7 @@ import { type Config, DEFAULTS, resolveConfig } from "../src/config.ts";
 import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
-import { assertSafeTarget, forbiddenMatcher, isAllowedUrl, SafetyError } from "../src/safety.ts";
+import { assertSafeTarget, forbiddenMatcher, isAllowedUrl, SafetyError, writeAllowed } from "../src/safety.ts";
 import { freeOracle } from "../src/signals.ts";
 import { assertPublicTarget } from "../src/runner/jobs.ts";
 import { tileBounds } from "../src/watch.ts";
@@ -64,6 +64,35 @@ describe("safety", () => {
     for (const name of ["Display name", "Save", "Search", "Payload viewer"]) {
       assert.equal(forbidden(name), false, name);
     }
+  });
+});
+
+describe("modes", () => {
+  const start = { startUrl: "https://staging.acme.dev/" };
+
+  it("defaults to observe everywhere", () => {
+    assert.equal(resolveConfig(start).mode, "observe");
+  });
+
+  it("refuses interact without confirming the environment is disposable", () => {
+    assert.throws(() => resolveConfig({ ...start, mode: "interact" }), /Confirm the environment is disposable/);
+    assert.equal(resolveConfig({ ...start, mode: "interact", confirmDisposable: true }).mode, "interact");
+  });
+
+  it("requires valid write paths for observe-writes", () => {
+    assert.throws(() => resolveConfig({ ...start, mode: "observe-writes" }), /at least one allowed write path/);
+    assert.throws(() => resolveConfig({ ...start, mode: "observe-writes", allowedWritePaths: ["entity"] }), /must start with/);
+    assert.throws(() => resolveConfig({ ...start, mode: "bogus" as never }), /mode must be one of/);
+  });
+
+  it("matches write paths exactly, or as a prefix only with /*", () => {
+    const policy = { mode: "observe-writes" as const, allowedWritePaths: ["/entity", "/api/*"] };
+    assert.equal(writeAllowed("https://a.test/entity?page=1", policy), true);
+    assert.equal(writeAllowed("https://a.test/entity/create", policy), false);
+    assert.equal(writeAllowed("https://a.test/api/graphql", policy), true);
+    assert.equal(writeAllowed("https://a.test/apix", policy), false);
+    assert.equal(writeAllowed("https://a.test/anything", { mode: "observe", allowedWritePaths: [] }), false);
+    assert.equal(writeAllowed("https://a.test/anything", { mode: "interact", allowedWritePaths: [] }), true);
   });
 });
 

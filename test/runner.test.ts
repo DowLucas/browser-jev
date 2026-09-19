@@ -76,6 +76,9 @@ describe("runner service", () => {
       [{ ...demoRun, authState: "../../etc/passwd" }, /Invalid authState/],
       [{ ...demoRun, authState: "missing" }, /No saved login session/],
       [{ ...demoRun, steps: 100000 }, /steps must be an integer/],
+      [{ ...demoRun, mode: "interact" }, /Confirm the environment is disposable/],
+      [{ ...demoRun, mode: "observe-writes" }, /at least one allowed write path/],
+      [{ ...demoRun, mode: "yolo" }, /mode must be one of/],
     ];
     for (const [body, error] of cases) {
       const res = await submit(body);

@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { join, resolve } from "node:path";
 import { type Config, resolveConfig } from "../config.ts";
 import type { RunSummary } from "../report.ts";
-import { assertSafeTarget } from "../safety.ts";
+import { assertSafeTarget, type Mode, MODES } from "../safety.ts";
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "interrupted";
 
@@ -18,8 +18,12 @@ export interface RunRequest {
   steps?: number;
   personas?: Config["personas"];
   useModel?: boolean;
-  /** Defaults to true on the runner: nothing is submitted unless a run explicitly opts out. */
-  readOnly?: boolean;
+  /** What may reach the server; defaults to observe (nothing but reads). */
+  mode?: Mode;
+  /** For observe-writes: exact paths ("/entity"), or a prefix ending in "/*" ("/api/*"). */
+  allowedWritePaths?: string[];
+  /** Required for interact mode: the caller confirms the target's data may be changed. */
+  confirmDisposable?: boolean;
   thresholds?: Partial<Config["thresholds"]>;
   /** Added to the default forbidden-control patterns; the defaults cannot be removed. */
   extraForbiddenPatterns?: string[];
@@ -82,7 +86,9 @@ const REQUEST_SCHEMA: Record<keyof RunRequest, { check: Check; expected: string 
   steps: { check: isIntUpTo(LIMITS.steps), expected: `an integer 1-${LIMITS.steps}` },
   personas: { check: isStringArray, expected: "an array of persona names" },
   useModel: { check: isBool, expected: "a boolean" },
-  readOnly: { check: isBool, expected: "a boolean" },
+  mode: { check: (v) => MODES.includes(v as Mode), expected: `one of ${MODES.join(", ")}` },
+  allowedWritePaths: { check: isStringArray, expected: "an array of paths like /entity or /api/*" },
+  confirmDisposable: { check: isBool, expected: "a boolean" },
   thresholds: { check: isThresholds, expected: "{warnConfidence, strongConfidence, failConfidence: 0-1, warnSeverity, failSeverity: 0-4}" },
   extraForbiddenPatterns: { check: isStringArray, expected: "an array of regex strings" },
   spec: { check: isString, expected: "a string" },
@@ -144,10 +150,10 @@ export class JobStore {
       if (value !== undefined && !rule.check(value)) throw new RequestError(`${key} must be ${rule.expected}`);
     }
     if (!request.startUrl) throw new RequestError("startUrl is required");
-    const { extraForbiddenPatterns = [], spec: _spec, authState, readOnly = true, ...rest } = request;
+    const { extraForbiddenPatterns = [], spec: _spec, authState, ...rest } = request;
     let cfg: Config;
     try {
-      cfg = resolveConfig({ ...rest, readOnly, storageStatePath: authState && this.authPath(authState) });
+      cfg = resolveConfig({ ...rest, storageStatePath: authState && this.authPath(authState) });
       cfg.forbiddenPatterns = [...cfg.forbiddenPatterns, ...extraForbiddenPatterns];
       for (const p of cfg.forbiddenPatterns) new RegExp(p);
       assertSafeTarget(cfg);

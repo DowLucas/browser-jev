@@ -41,18 +41,44 @@ export function isAppUrl(url: string, allowedHosts: readonly string[]): boolean 
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export type BlockReason = "off-allowlist" | "write-in-read-only";
+/**
+ * What may reach the server:
+ * - observe: page loads and reads only; every write (POST, PUT, ..., WebSocket) is blocked
+ * - observe-writes: as observe, plus writes to the listed paths (for apps that read via POST)
+ * - interact: all writes; only for disposable environments, confirmed per run
+ */
+export const MODES = ["observe", "observe-writes", "interact"] as const;
+export type Mode = (typeof MODES)[number];
+
+export type BlockReason = "off-allowlist" | "write-blocked";
+
+export interface WritePolicy {
+  mode: Mode;
+  /** For observe-writes: exact paths ("/entity"), or a prefix ending in "/*" ("/api/*"). */
+  allowedWritePaths: readonly string[];
+}
 
 /**
- * Abort every request that leaves the allowlisted hosts, so nothing reaches third parties.
- * In read-only mode, also abort every write (POST, PUT, ...) so no form ever submits.
- * WebSockets bypass `route`, so they get their own handler: off-allowlist sockets are always
- * refused, and in read-only mode every socket is, since any message on one can be a write.
+ * Exact path match by default, so allowing "/counterparties" does not also allow
+ * "/counterparties/create". A trailing "/*" allows everything below that path.
+ */
+export function writeAllowed(url: string, policy: WritePolicy): boolean {
+  if (policy.mode === "interact") return true;
+  if (policy.mode === "observe") return false;
+  const path = new URL(url).pathname;
+  return policy.allowedWritePaths.some((p) => (p.endsWith("/*") ? path.startsWith(p.slice(0, -1)) : path === p));
+}
+
+/**
+ * Abort every request that leaves the allowlisted hosts, so nothing reaches third parties, and
+ * every write the mode does not allow. WebSockets bypass `route`, so they get their own handler:
+ * any message on one can be a write, so a socket is a write to its path.
  */
 export async function installNetworkFence(
   context: BrowserContext,
-  opts: { allowedHosts: readonly string[]; readOnly: boolean },
+  opts: WritePolicy & { allowedHosts: readonly string[] },
   onBlocked: (url: string, reason: BlockReason) => void,
+  onWrite: (write: string) => void = () => {},
 ): Promise<void> {
   await context.route("**/*", (route) => {
     const request = route.request();
@@ -61,9 +87,13 @@ export async function installNetworkFence(
       onBlocked(url, "off-allowlist");
       return route.abort("blockedbyclient");
     }
-    if (opts.readOnly && !READ_METHODS.has(request.method())) {
-      onBlocked(`${request.method()} ${url}`, "write-in-read-only");
-      return route.abort("blockedbyclient");
+    if (!READ_METHODS.has(request.method())) {
+      const write = `${request.method()} ${new URL(url).pathname}`;
+      if (!writeAllowed(url, opts)) {
+        onBlocked(write, "write-blocked");
+        return route.abort("blockedbyclient");
+      }
+      onWrite(write);
     }
     return route.continue();
   });
@@ -73,10 +103,12 @@ export async function installNetworkFence(
       onBlocked(url, "off-allowlist");
       return ws.close();
     }
-    if (opts.readOnly) {
-      onBlocked(`WEBSOCKET ${url}`, "write-in-read-only");
+    const write = `WEBSOCKET ${new URL(url).pathname}`;
+    if (!writeAllowed(url, opts)) {
+      onBlocked(write, "write-blocked");
       return ws.close();
     }
+    onWrite(write);
     ws.connectToServer();
   });
 }

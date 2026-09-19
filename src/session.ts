@@ -50,8 +50,10 @@ export interface SessionResult {
   judgments: JudgmentRecord[];
   actionLog: string[];
   blockedHosts: string[];
-  /** Writes aborted by read-only mode ("POST https://..."). */
+  /** Writes the mode blocked, e.g. "POST /orders". */
   blockedWrites: string[];
+  /** Writes that reached the server, with how often each was sent. */
+  writesSent: Record<string, number>;
   judgeErrors: number;
   tracePath?: string;
 }
@@ -102,6 +104,7 @@ export async function runSession(
     actionLog: [],
     blockedHosts: [],
     blockedWrites: [],
+    writesSent: {},
     judgeErrors: 0,
   };
   const blocked = new Set<string>();
@@ -120,11 +123,18 @@ export async function runSession(
   });
   /** Requests the fence blocked since the last signal drain; their fallout is not an app bug. */
   let blockedSinceDrain = 0;
-  await installNetworkFence(context, cfg, (url, reason) => {
-    blockedSinceDrain++;
-    if (reason === "write-in-read-only") blockedWrites.add(url);
-    else blocked.add(new URL(url).host);
-  });
+  await installNetworkFence(
+    context,
+    cfg,
+    (url, reason) => {
+      blockedSinceDrain++;
+      if (reason === "write-blocked") blockedWrites.add(url);
+      else blocked.add(new URL(url).host);
+    },
+    (write) => {
+      result.writesSent[write] = (result.writesSent[write] ?? 0) + 1;
+    },
+  );
   await context.tracing.start({ screenshots: true, snapshots: true });
   await Settler.install(context);
   const page = await context.newPage();

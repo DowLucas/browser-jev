@@ -40,6 +40,18 @@ export interface RunOutcome {
   reportPath: string;
 }
 
+export function describeMode(cfg: Config): string {
+  if (cfg.mode === "observe") return "observe (no writes reach the server)";
+  if (cfg.mode === "observe-writes") return `observe-writes (only ${cfg.allowedWritePaths.join(", ")})`;
+  return "INTERACT (all submissions reach the server)";
+}
+
+function sumCounts(counts: Record<string, number>[]): Record<string, number> {
+  const total: Record<string, number> = {};
+  for (const c of counts) for (const [k, n] of Object.entries(c)) total[k] = (total[k] ?? 0) + n;
+  return total;
+}
+
 export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome> {
   assertSafeTarget(cfg);
   const log = deps.log ?? consoleLog;
@@ -53,7 +65,7 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
 
   log.info(
     `Exploring ${cfg.startUrl}: ${cfg.sessions} sessions × ${cfg.steps} steps, up to ${cfg.workers} at once, ` +
-      `${client ? "Jev judgment on" : "free oracle only"}${cfg.readOnly ? ", READ-ONLY (writes blocked)" : ""}`,
+      `${client ? "Jev judgment on" : "free oracle only"}, mode ${describeMode(cfg)}`,
   );
 
   const started = Date.now();
@@ -98,7 +110,9 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
     judgeErrors: results.reduce((s, r) => s + r.judgeErrors, 0),
     inputTokens: judgments.reduce((s, j) => s + j.inputTokens, 0),
     blockedHosts: [...new Set(results.flatMap((r) => r.blockedHosts))],
+    mode: describeMode(cfg),
     blockedWrites: [...new Set(results.flatMap((r) => r.blockedWrites))],
+    writesSent: sumCounts(results.map((r) => r.writesSent)),
     durationMs: Date.now() - started,
   };
   await writeOutputs(deps.outDir, { summary, groups, suppressed, judgments }, cfg.escalateCommand);

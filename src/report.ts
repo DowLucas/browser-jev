@@ -16,7 +16,10 @@ export interface RunSummary {
   judgeErrors: number;
   inputTokens: number;
   blockedHosts: string[];
+  mode: string;
   blockedWrites: string[];
+  /** Writes that reached the server, with counts. */
+  writesSent: Record<string, number>;
   durationMs: number;
 }
 
@@ -55,7 +58,9 @@ export function renderMarkdown({ summary, groups, suppressed, judgments }: Repor
 - Jev calls: ${summary.jevCalls} (${summary.judgeErrors} errors), ${summary.inputTokens} input tokens
 - Duration: ${(summary.durationMs / 1000).toFixed(1)}s
 - Blocked off-origin hosts: ${summary.blockedHosts.join(", ") || "none"}
-- Writes blocked by read-only mode: ${summary.blockedWrites.length ? summary.blockedWrites.map((w) => `\`${w}\``).join(", ") : "none"}
+- Mode: ${summary.mode}
+- Writes sent to the server: ${listWrites(summary.writesSent)}
+- Writes blocked: ${summary.blockedWrites.length ? summary.blockedWrites.map((w) => `\`${w}\``).join(", ") : "none"}
 - Suppressed by baseline: ${suppressed.length}
 
 ${section("Failures", fails)}
@@ -67,6 +72,11 @@ build: anything counted here at your fail threshold is a false positive.
 
 ${calibrationTable(judgments)}
 `;
+}
+
+function listWrites(writes: Record<string, number>): string {
+  const entries = Object.entries(writes).sort((a, b) => b[1] - a[1]);
+  return entries.length ? entries.map(([w, n]) => `\`${w}\` ×${n}`).join(", ") : "none";
 }
 
 function renderGroup(g: FindingGroup): string {

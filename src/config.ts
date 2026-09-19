@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { PERSONA_NAMES, type PersonaName } from "./personas.ts";
+import { type Mode, MODES } from "./safety.ts";
 import type { FreeCategory } from "./signals.ts";
 
 export interface Thresholds {
@@ -54,8 +55,12 @@ export interface Config {
   maxActions: number;
   actionTimeoutMs: number;
   headless: boolean;
-  /** Block every non-GET/HEAD request to the target, so nothing is ever submitted. For live sites. */
-  readOnly: boolean;
+  /** What may reach the server: see MODES in safety.ts. */
+  mode: Mode;
+  /** For observe-writes: exact paths ("/entity"), or a prefix ending in "/*" ("/api/*"). */
+  allowedWritePaths: string[];
+  /** Interact mode sends real submissions; the run must confirm the target is disposable. */
+  confirmDisposable: boolean;
   /** Visible, slowed-down browsers with an on-page banner and target highlighting. */
   watch: boolean;
   slowMoMs: number;
@@ -100,7 +105,9 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   maxActions: 120,
   actionTimeoutMs: 5_000,
   headless: true,
-  readOnly: false,
+  mode: "observe",
+  allowedWritePaths: [],
+  confirmDisposable: false,
   watch: false,
   slowMoMs: 300,
 };
@@ -124,7 +131,11 @@ const USAGE = `Usage: npm run explore -- [options]
   --headed                 Show the browser
   --watch                  Show the browsers tiled and slowed down, with a banner and highlighted targets
   --slow-mo <ms>           Delay per browser operation in --watch (default ${DEFAULTS.slowMoMs}; lower is faster)
-  --read-only              Block all non-GET requests to the target (use on live sites)
+  --mode <mode>            observe (default): nothing but reads reach the server
+                           observe-writes: also writes to the paths given with --allow-write
+                           interact: all submissions go through (disposable environments only)
+  --allow-write <path>     Write path allowed in observe-writes (repeatable): /entity, or /api/*
+  --confirm-disposable     Required for interact: confirms the target's data may be changed
 `;
 
 export async function loadConfig(argv: string[]): Promise<Config> {
@@ -148,7 +159,9 @@ export async function loadConfig(argv: string[]): Promise<Config> {
       headed: { type: "boolean" },
       watch: { type: "boolean" },
       "slow-mo": { type: "string" },
-      "read-only": { type: "boolean" },
+      mode: { type: "string" },
+      "allow-write": { type: "string", multiple: true },
+      "confirm-disposable": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -178,7 +191,9 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     headless: values.headed || values.watch ? false : undefined,
     watch: values.watch,
     slowMoMs: toInt(values["slow-mo"], "slow-mo"),
-    readOnly: values["read-only"],
+    mode: values.mode as Mode | undefined,
+    allowedWritePaths: values["allow-write"],
+    confirmDisposable: values["confirm-disposable"],
   });
 
   return resolveConfig(file, flags);
@@ -210,7 +225,24 @@ function validate(cfg: Partial<Config>): Config {
   for (const key of ["sessions", "workers", "steps"] as const) {
     if (!(Number(cfg[key]) >= 1)) throw new Error(`${key} must be >= 1`);
   }
+  assertModeAllowed(cfg);
   return cfg as Config;
+}
+
+function assertModeAllowed(cfg: Partial<Config>): void {
+  if (!MODES.includes(cfg.mode as Mode)) throw new Error(`mode must be one of: ${MODES.join(", ")}`);
+  const paths = cfg.allowedWritePaths ?? [];
+  const bad = paths.find((p) => !p.startsWith("/"));
+  if (bad) throw new Error(`Write path "${bad}" must start with "/" (e.g. /entity or /api/*)`);
+  if (cfg.mode === "observe-writes" && !paths.length) {
+    throw new Error("observe-writes needs at least one allowed write path (--allow-write /path)");
+  }
+  if (cfg.mode === "interact" && !cfg.confirmDisposable) {
+    throw new Error(
+      "Refusing to start: interact mode sends real submissions and changes data on the target. " +
+        "Confirm the environment is disposable (--confirm-disposable, or the checkbox in the UI).",
+    );
+  }
 }
 
 function toInt(value: string | undefined, name: string): number | undefined {
