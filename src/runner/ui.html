@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Live</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel-2: #1c222b; --border: #2a313c;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --ok: #3fb950; --warn: #d29922; --fail: #f85149;
+    --impatient: #f0883e; --sloppy: #db61a2; --out-of-order: #a371f7; --completionist: #3fb9a8;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; background: rgba(14,17,22,.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .stats { display: flex; gap: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--text); font-weight: 600; }
+  .spacer { flex: 1; }
+  button, .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  main { padding: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .tile.flagged { border-color: var(--warn); }
+  .tile.failing { border-color: var(--fail); }
+  .tile.ended { opacity: .55; }
+  .tile-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; }
+  .persona { padding: 2px 8px; border-radius: 999px; font-weight: 600; color: #0b1220; background: var(--muted); }
+  .run { color: var(--muted); font-family: ui-monospace, monospace; }
+  .flagcount { color: var(--warn); font-weight: 600; margin-left: auto; }
+  .flagcount + .step { margin-left: 8px; }
+  .step { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .screen { position: relative; aspect-ratio: 16 / 9; background: #000; }
+  .screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .screen .placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+  .progress { height: 2px; background: var(--border); }
+  .progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+  .tile-foot { padding: 8px 10px; display: grid; gap: 4px; font-size: 12px; min-height: 58px; }
+  .url { color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .next { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .flags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .flag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(210,153,34,.15); color: var(--warn); border: 1px solid rgba(210,153,34,.4); }
+  .flag.fail { background: rgba(248,81,73,.15); color: var(--fail); border-color: rgba(248,81,73,.4); }
+  .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 60px 0; border: 1px dashed var(--border); border-radius: 10px; }
+  section.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  form.run-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; align-items: end; }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  input[type=text], input[type=number], input[type=password] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit;
+  }
+  .checks { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text); font-size: 13px; }
+  .checks label { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 13px; }
+  .error { color: var(--fail); font-size: 13px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 24px 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .status { font-weight: 600; }
+  .status.running { color: var(--accent); } .status.done { color: var(--ok); } .status.queued { color: var(--muted); }
+  .status.failed, .status.cancelled, .status.interrupted { color: var(--warn); }
+  a { color: var(--accent); }
+  .login { max-width: 360px; margin: 12vh auto; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="login" class="login panel" hidden>
+  <section class="panel">
+    <h1>Jev Live</h1>
+    <p style="color:var(--muted)">Enter the runner token.</p>
+    <form id="login-form" style="display:grid;gap:10px">
+      <input type="password" name="token" placeholder="RUNNER_TOKEN" autocomplete="current-password" required>
+      <button class="primary">Sign in</button>
+      <div class="error" id="login-error"></div>
+    </form>
+  </section>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1><span class="dot" id="conn"></span>Jev Live</h1>
+    <div class="stats">
+      <span><b id="s-sessions">0</b> live sessions</span>
+      <span><b id="s-active">0</b> running</span>
+      <span><b id="s-queued">0</b> queued</span>
+      <span>slots <b id="s-slots">0/0</b></span>
+    </div>
+    <div class="spacer"></div>
+    <button id="toggle-form" class="primary">New run</button>
+  </header>
+  <main>
+    <section class="panel" id="new-run" hidden>
+      <form class="run-form" id="run-form">
+        <label>Start URL <input type="text" name="startUrl" placeholder="https://staging.example.dev/" required></label>
+        <label>Allowed hosts (comma-separated) <input type="text" name="allowedHosts" placeholder="staging.example.dev" required></label>
+        <label>Saved login session (optional) <input type="text" name="authState" placeholder="e.g. staging"></label>
+        <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000"></label>
+        <label>At once (workers) <input type="number" name="workers" value="4" min="1" max="16"></label>
+        <label>Steps per session <input type="number" name="steps" value="25" min="1" max="500"></label>
+        <div class="checks" style="grid-column:1/-1">
+          <span style="color:var(--muted)">Personas:</span>
+          <label><input type="checkbox" name="persona" value="impatient" checked> impatient</label>
+          <label><input type="checkbox" name="persona" value="sloppy" checked> sloppy</label>
+          <label><input type="checkbox" name="persona" value="out-of-order" checked> out-of-order</label>
+          <label><input type="checkbox" name="persona" value="completionist" checked> completionist</label>
+          <span style="width:16px"></span>
+          <label><input type="checkbox" name="readOnly" checked> read-only (block all writes)</label>
+          <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;grid-column:1/-1">
+          <button class="primary">Start run</button>
+          <span class="error" id="run-error"></span>
+        </div>
+      </form>
+    </section>
+
+    <div class="grid" id="grid"><div class="empty" id="empty">No sessions running. Start a run to watch the browsers here.</div></div>
+
+    <h2>Recent runs</h2>
+    <table>
+      <thead><tr><th>Status</th><th>Target</th><th>Sessions</th><th>Findings</th><th>Started</th><th></th></tr></thead>
+      <tbody id="runs"></tbody>
+    </table>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const tiles = new Map();
+
+async function api(path, init = {}) {
+  const res = await fetch(path, { ...init, headers: { "content-type": "application/json" }, credentials: "same-origin" });
+  if (res.status === 401) { showLogin(); throw new Error("unauthorized"); }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+
+function showLogin() { $("app").hidden = true; $("login").hidden = false; }
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const token = new FormData(e.target).get("token");
+  const res = await fetch("/login", { method: "POST", body: JSON.stringify({ token }), headers: { "content-type": "application/json" } });
+  if (!res.ok) { $("login-error").textContent = "Wrong token."; return; }
+  location.reload();
+});
+
+$("toggle-form").addEventListener("click", () => { $("new-run").hidden = !$("new-run").hidden; });
+
+$("run-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const request = {
+    startUrl: f.get("startUrl").trim(),
+    allowedHosts: f.get("allowedHosts").split(",").map((h) => h.trim()).filter(Boolean),
+    sessions: Number(f.get("sessions")),
+    workers: Number(f.get("workers")),
+    steps: Number(f.get("steps")),
+    personas: f.getAll("persona"),
+    readOnly: f.get("readOnly") === "on",
+    useModel: f.get("useModel") === "on",
+  };
+  if (f.get("authState").trim()) request.authState = f.get("authState").trim();
+  $("run-error").textContent = "";
+  try {
+    await api("/runs", { method: "POST", body: JSON.stringify(request) });
+    $("new-run").hidden = true;
+    refreshRuns();
+  } catch (err) { $("run-error").textContent = err.message; }
+});
+
+function tileFor(key) {
+  let t = tiles.get(key);
+  if (t) return t;
+  const el = document.createElement("div");
+  el.className = "tile";
+  el.innerHTML = `
+    <div class="tile-head"><span class="persona"></span><span class="run"></span><span class="flagcount" hidden></span><span class="step"></span></div>
+    <div class="screen"><div class="placeholder">waiting for first frame…</div><img alt=""></div>
+    <div class="progress"><div style="width:0"></div></div>
+    <div class="tile-foot"><div class="url"></div><div class="next"></div><div class="flags"></div></div>`;
+  t = {
+    el,
+    persona: el.querySelector(".persona"), run: el.querySelector(".run"), step: el.querySelector(".step"),
+    img: el.querySelector("img"), placeholder: el.querySelector(".placeholder"),
+    bar: el.querySelector(".progress > div"), url: el.querySelector(".url"), next: el.querySelector(".next"),
+    flags: el.querySelector(".flags"), flagCount: el.querySelector(".flagcount"), flagged: 0,
+  };
+  tiles.set(key, t);
+  const grid = $("grid");
+  const after = [...tiles.keys()].sort().find((k) => k > key);
+  grid.insertBefore(el, after ? tiles.get(after).el : null);
+  updateCounts();
+  return t;
+}
+
+function onMeta(s) {
+  const t = tileFor(s.key);
+  t.persona.textContent = s.persona;
+  t.persona.style.background = `var(--${s.persona})`;
+  t.run.textContent = `${s.runId.slice(0, 8)} · ${s.sessionId.split("-")[0]}`;
+  t.step.textContent = s.ended ? `done · ${s.findings} findings` : `step ${s.step}/${s.steps}`;
+  t.bar.style.width = `${Math.min(100, (s.step / s.steps) * 100)}%`;
+  t.url.textContent = s.url || "";
+  t.next.textContent = s.ended ? "" : `→ ${s.next}`;
+  t.flags.replaceChildren(...s.flags.map((f) => {
+    const b = document.createElement("span");
+    b.className = "flag" + (f.startsWith("FAIL") ? " fail" : "");
+    b.textContent = f;
+    return b;
+  }));
+  if (s.flags.length) {
+    // Badges show this step; the header keeps a running count so flags don't vanish on the next step.
+    t.flagged += s.flags.length;
+    t.flagCount.hidden = false;
+    t.flagCount.textContent = `⚑ ${t.flagged}`;
+    t.el.classList.add(s.flags.some((f) => f.startsWith("FAIL")) ? "failing" : "flagged");
+  }
+  t.el.classList.toggle("ended", s.ended);
+  updateCounts();
+}
+
+function onFrame({ key, jpeg }) {
+  const t = tileFor(key);
+  t.img.src = `data:image/jpeg;base64,${jpeg}`;
+  t.placeholder.hidden = true;
+}
+
+function onRemove({ key }) {
+  const t = tiles.get(key);
+  if (!t) return;
+  t.el.remove();
+  tiles.delete(key);
+  updateCounts();
+}
+
+function updateCounts() {
+  const live = [...tiles.values()].filter((t) => !t.el.classList.contains("ended")).length;
+  $("s-sessions").textContent = live;
+  $("empty").hidden = tiles.size > 0;
+}
+
+function connect() {
+  const es = new EventSource("/live");
+  es.addEventListener("open", () => $("conn").classList.add("live"));
+  es.addEventListener("error", () => $("conn").classList.remove("live"));
+  es.addEventListener("meta", (e) => onMeta(JSON.parse(e.data)));
+  es.addEventListener("frame", (e) => onFrame(JSON.parse(e.data)));
+  es.addEventListener("remove", (e) => onRemove(JSON.parse(e.data)));
+}
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+async function refreshRuns() {
+  const [runs, health] = await Promise.all([api("/runs"), fetch("/health").then((r) => r.json())]);
+  $("s-active").textContent = health.active.length;
+  $("s-queued").textContent = health.queued;
+  $("s-slots").textContent = `${health.slotsInUse}/${health.capacity}`;
+  $("runs").innerHTML = runs.slice(0, 15).map((j) => {
+    const o = j.outcome;
+    const findings = o ? `${o.failing} failing · ${o.warnings} warnings` : "–";
+    const started = j.startedAt ? new Date(j.startedAt).toLocaleTimeString() : "–";
+    const report = o ? `<a href="/runs/${j.id}/report" target="_blank">report</a>` : "";
+    const cancel = ["queued", "running"].includes(j.status) ? `<button data-cancel="${j.id}">cancel</button>` : "";
+    return `<tr><td class="status ${j.status}">${j.status}</td><td>${esc(j.request.startUrl)}</td>` +
+      `<td>${o ? o.sessionsRun : "–"}/${j.request.sessions ?? 4}</td><td>${findings}</td><td>${started}</td><td>${report} ${cancel}</td></tr>`;
+  }).join("");
+}
+
+document.addEventListener("click", async (e) => {
+  const id = e.target.dataset?.cancel;
+  if (id) { await api(`/runs/${id}/cancel`, { method: "POST" }); refreshRuns(); }
+});
+
+(async () => {
+  try {
+    await api("/runs");
+  } catch { return; }
+  $("app").hidden = false;
+  connect();
+  refreshRuns();
+  setInterval(refreshRuns, 3000);
+})();
+</script>
+</body>
+</html>

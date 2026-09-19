@@ -7,6 +7,7 @@ import { FindingStore, type FindingGroup } from "./findings.ts";
 import { type RunSummary, writeOutputs } from "./report.ts";
 import { assertSafeTarget } from "./safety.ts";
 import { consoleLog, type RunLog, runSession, type SessionResult } from "./session.ts";
+import type { LiveSink } from "./live.ts";
 import type { FairSlots } from "./slots.ts";
 import { tileBounds } from "./watch.ts";
 
@@ -25,6 +26,8 @@ export interface RunDeps {
   shouldStop?: () => boolean;
   /** In --watch, the screen to tile slot windows over. */
   screen?: { width: number; height: number };
+  /** Live grid sink for this run's sessions. */
+  live?: LiveSink;
 }
 
 export interface RunOutcome {
@@ -68,7 +71,7 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
         const sessionId = `s${String(index).padStart(3, "0")}-${persona}`;
         const window = deps.screen && tileBounds(slot.index, deps.slots.capacity, deps.screen);
         const result = await runSession(
-          { browser: deps.browser, cfg, client, spec, traceDir, window, log, shouldStop: stopped },
+          { browser: deps.browser, cfg, client, spec, traceDir, window, log, live: deps.live, shouldStop: stopped },
           sessionId,
           persona,
         );

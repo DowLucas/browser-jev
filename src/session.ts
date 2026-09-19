@@ -17,6 +17,7 @@ import { classifyJudgment, judgeStep, type Judgment } from "./judge.ts";
 import { ariaSnapshot, enumerateElements, invalidFields, isBlank } from "./page-model.ts";
 import { PERSONAS, type PersonaName } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
+import { type LiveSink, startScreencast } from "./live.ts";
 import { placeWindow, showNextAction, type WindowBounds } from "./watch.ts";
 import { type FreeResult, freeOracle, SignalCollector, summarizeSignals } from "./signals.ts";
 
@@ -59,6 +60,8 @@ export interface SessionDeps {
   window?: WindowBounds;
   /** Where progress lines go; defaults to the console. */
   log?: RunLog;
+  /** Live grid: session state and screen frames. */
+  live?: LiveSink;
 }
 
 const HISTORY_IN_STATE = 10;
@@ -109,6 +112,14 @@ export async function runSession(
   });
   await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
+  const live = deps.live;
+  live?.started(sessionId, { persona: personaName, steps: cfg.steps });
+  const stopScreencast = live
+    ? await startScreencast(page, (jpeg) => live.frame(sessionId, jpeg)).catch((err: Error) => {
+        log.warn(`[${sessionId}] live view unavailable: ${err.message.split("\n")[0]}`);
+        return undefined;
+      })
+    : undefined;
   if (deps.window) {
     await placeWindow(page, deps.window).catch((err: Error) =>
       log.warn(`[${sessionId}] could not place window: ${err.message.split("\n")[0]}`),
@@ -266,6 +277,7 @@ export async function runSession(
       const next = describeAction(action);
       const where = new URL(url).pathname + new URL(url).search;
       log.info(`[${sessionId}] ${String(step).padStart(2)} ${where}  → ${next}${flagged.length ? `   ⚑ ${flagged.join(", ")}` : ""}`);
+      live?.step(sessionId, { step: step + 1, url: where, next, flags: flagged });
       if (cfg.watch) {
         const banner = [
           `Jev explorer · ${personaName} · session ${sessionId} · step ${step + 1}/${cfg.steps}`,
@@ -309,6 +321,8 @@ export async function runSession(
   } catch (err) {
     log.warn(`[${sessionId}] session ended early: ${(err as Error).message.split("\n")[0]}`);
   } finally {
+    stopScreencast?.();
+    live?.ended(sessionId, { findings: result.findings.length });
     // Keep a trace only when there is something to reproduce.
     if (result.findings.length) {
       result.tracePath = join(deps.traceDir, `${sessionId}.zip`);

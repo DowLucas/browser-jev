@@ -18,6 +18,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { type Browser, chromium } from "playwright";
+import { LiveHub } from "../live.ts";
 import { executeRun } from "../run.ts";
 import type { RunLog } from "../session.ts";
 import { FairSlots } from "../slots.ts";
@@ -37,6 +38,7 @@ export interface RunnerOptions {
 export class Runner {
   readonly store: JobStore;
   readonly slots: FairSlots;
+  readonly live = new LiveHub();
   readonly #active = new Map<string, { cancel: () => void }>();
   #browser: Promise<Browser> | undefined;
   #draining = false;
@@ -130,6 +132,7 @@ export class Runner {
           spec: job.request.spec,
           log,
           shouldStop: () => cancelled,
+          live: this.live.forRun(job.id),
           screen: this.opts.watch ? await detectScreen() : undefined,
         });
         job.outcome = {
@@ -172,12 +175,18 @@ export class Runner {
 
 // --- HTTP ------------------------------------------------------------------------------------------
 
+const COOKIE = "jev_token";
+const UI_HTML = readFile(new URL("./ui.html", import.meta.url), "utf8");
+
 export function createHandler(runner: Runner) {
   const token = Buffer.from(runner.opts.token);
-  const authorized = (req: IncomingMessage) => {
-    const given = Buffer.from((req.headers.authorization ?? "").replace(/^Bearer /, ""));
+  const matches = (candidate: string) => {
+    const given = Buffer.from(candidate);
     return given.length === token.length && timingSafeEqual(given, token);
   };
+  // API clients send a bearer token; the browser UI (and EventSource, which cannot set headers) uses a cookie.
+  const authorized = (req: IncomingMessage) =>
+    matches((req.headers.authorization ?? "").replace(/^Bearer /, "")) || matches(cookie(req, COOKIE) ?? "");
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     const send = (status: number, body: unknown, type = "application/json") => {
@@ -188,11 +197,20 @@ export function createHandler(runner: Runner) {
     const parts = pathname.split("/").filter(Boolean);
 
     try {
+      if (req.method === "GET" && pathname === "/") return send(200, await UI_HTML, "text/html; charset=utf-8");
+      if (req.method === "POST" && pathname === "/login") {
+        const { token: given } = (await readJson(req)) as unknown as { token?: string };
+        if (typeof given !== "string" || !matches(given)) return send(401, { error: "wrong token" });
+        const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+        res.setHeader("set-cookie", `${COOKIE}=${given}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secure}`);
+        return send(200, { ok: true });
+      }
       if (req.method === "GET" && pathname === "/health") {
         const queued = (await runner.store.list()).filter((j) => j.status === "queued").length;
         return send(200, { ok: true, queued, ...runner.status() });
       }
       if (!authorized(req)) return send(401, { error: "unauthorized" });
+      if (req.method === "GET" && pathname === "/live") return runner.live.subscribe(res);
 
       if (parts[0] !== "runs") return send(404, { error: "not found" });
       if (parts.length === 1 && req.method === "POST") return send(201, await runner.submit(await readJson(req)));
@@ -219,6 +237,14 @@ export function createHandler(runner: Runner) {
       return send(500, { error: "internal error" });
     }
   };
+}
+
+function cookie(req: IncomingMessage, name: string): string | undefined {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return v.join("=");
+  }
+  return undefined;
 }
 
 async function readJson(req: IncomingMessage): Promise<RunRequest> {
