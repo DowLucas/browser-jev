@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { TypeSafeClient } from "@typesafe-ai/sdk";
-import type { Browser, Page } from "playwright";
+import type { Browser } from "playwright";
 import {
   actionSignature,
   candidateActions,
@@ -19,6 +19,7 @@ import { ariaSnapshot, enumerateElements, invalidFields, isBlank, layoutIssues }
 import { PERSONAS, type PersonaName } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
 import { type LiveSink, startScreencast } from "./live.ts";
+import { Settler } from "./settle.ts";
 import { placeWindow, showNextAction, type WindowBounds } from "./watch.ts";
 import {
   type FreeCategory,
@@ -125,7 +126,10 @@ export async function runSession(
     else blocked.add(new URL(url).host);
   });
   await context.tracing.start({ screenshots: true, snapshots: true });
+  await Settler.install(context);
   const page = await context.newPage();
+  const settler = new Settler(page);
+  const settle = () => settler.wait(page, SETTLE[personaName === "impatient" ? "impatient" : "normal"]);
   const live = deps.live;
   live?.started(sessionId, { persona: personaName, steps: cfg.steps });
   const stopScreencast = live
@@ -209,11 +213,11 @@ export async function runSession(
         log.info(`[${sessionId}] stopping after ${step} steps`);
         break;
       }
-      await settle(page, personaName);
+      await settle();
       // Back/forward can leave the app (e.g. to about:blank); return to the start instead of judging that.
       if (!isAppUrl(page.url(), cfg.allowedHosts)) {
         await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
-        await settle(page, personaName);
+        await settle();
         collector.drain();
         trigger = "start";
         lastAction = undefined;
@@ -386,7 +390,7 @@ export async function runSession(
       }
     }
     // Signals from the final action.
-    await settle(page, personaName);
+    await settle();
     recordFree(freeOracle(collector.drain(), false), page.url(), cfg.steps, blockedSinceDrain);
   } catch (err) {
     log.warn(`[${sessionId}] session ended early: ${(err as Error).message.split("\n")[0]}`);
@@ -419,15 +423,15 @@ function describeTarget(a: Action): string {
   return a.role ? `${a.role} "${a.name ?? ""}"` : "the target";
 }
 
-async function settle(page: Page, persona: PersonaName): Promise<void> {
-  // The impatient persona does not wait for anything; that is the point.
-  if (persona === "impatient") {
-    await page.waitForTimeout(100);
-    return;
-  }
-  await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 2_000 }).catch(() => {});
-}
+/**
+ * How long to wait for the page to settle before judging it. The impatient persona acts on a short
+ * fuse (that is the point), but every persona is judged on a page that has stopped changing:
+ * judging a half-rendered page is how "the click did nothing" false positives happen.
+ */
+const SETTLE = {
+  normal: { quietMs: 300, timeoutMs: 6_000 },
+  impatient: { quietMs: 150, timeoutMs: 1_500 },
+} as const;
 
 function actionNotes(a: Action, tried: Map<string, number>, visited: readonly string[]): string {
   const count = tried.get(actionSignature(a)) ?? 0;

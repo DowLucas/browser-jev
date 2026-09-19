@@ -205,6 +205,8 @@ const LAYOUT_SCRIPT = String.raw`() => {
     if (![...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim())) continue;
     const st = getComputedStyle(el);
     if (!["hidden", "clip"].includes(st.overflowX) || st.textOverflow === "ellipsis") continue;
+    // Screen-reader-only text ("sr-only": a 1px box, clipped) is hidden on purpose.
+    if (el.clientWidth <= 1 || el.clientHeight <= 1 || st.clip.startsWith("rect(0") || st.clipPath.startsWith("inset(50%")) continue;
     if (el.scrollWidth > el.clientWidth + 1 && visible(el)) result.clipped.push(describe(el));
   }
   return result;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { type Browser, chromium, type Page } from "playwright";
-import { enumerateElements, type InteractiveElement, layoutIssues } from "../src/page-model.ts";
+import { ariaSnapshot, enumerateElements, type InteractiveElement, layoutIssues } from "../src/page-model.ts";
+import { Settler } from "../src/settle.ts";
 
 describe("in-page oracles", () => {
   let browser: Browser;
@@ -75,6 +76,45 @@ describe("in-page oracles", () => {
     assert.equal(issues.horizontalOverflow?.px, 600);
     assert.deepEqual(issues.horizontalOverflow?.culprits, ["Wide export table"]);
     assert.deepEqual(issues.clipped, ["Free shipping on all orders this week"]);
+  });
+
+  it("does not flag screen-reader-only text as clipped", async () => {
+    await page.setContent(`<!doctype html><body>
+      <span style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Rated 5.0 out of 5 on the App Store</span>
+    </body>`);
+    assert.deepEqual((await layoutIssues(page)).clipped, []);
+  });
+
+  it("waits for a client-side navigation to render before the page counts as settled", async () => {
+    // A single-page app: the link click pushes a URL, fetches data, and only then re-renders.
+    const context = await browser.newContext();
+    await Settler.install(context);
+    const spa = await context.newPage();
+    const settler = new Settler(spa);
+    await spa.route("https://spa.test/", (r) =>
+      r.fulfill({
+        contentType: "text/html",
+        body: `<main><h1>Home</h1><a href="/security" id="go">Security</a></main>
+          <script>
+            document.getElementById("go").addEventListener("click", async (e) => {
+              e.preventDefault();
+              history.pushState({}, "", "/security");
+              const html = await (await fetch("/api/page?security")).text();
+              document.querySelector("main").innerHTML = html;
+            });
+          </script>`,
+      }),
+    );
+    await spa.route("https://spa.test/api/page?security", async (r) => {
+      await new Promise((d) => setTimeout(d, 600));
+      await r.fulfill({ contentType: "text/html", body: "<h1>Security</h1><p>What is in place today</p>" });
+    });
+    await spa.goto("https://spa.test/");
+    await settler.wait(spa, { quietMs: 300, timeoutMs: 6000 });
+    await spa.click("#go");
+    await settler.wait(spa, { quietMs: 300, timeoutMs: 6000 });
+    assert.match(await ariaSnapshot(spa, 10_000), /heading "Security"/);
+    await context.close();
   });
 
   it("reports nothing on a clean page", async () => {

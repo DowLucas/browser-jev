@@ -227,10 +227,16 @@ const ARIA_ROLES = new Set(["link", "button", "textbox", "combobox", "checkbox",
  */
 async function resolveTarget(page: Page, a: Action): Promise<Locator> {
   const stamped = page.locator(`[${TARGET_ATTR}="${a.target}"]`);
-  if (await stamped.count()) return stamped;
-  if (a.role && ARIA_ROLES.has(a.role) && a.name) {
-    const byRole = page.getByRole(a.role as Parameters<Page["getByRole"]>[0], { name: a.name, exact: true });
-    if (await byRole.count()) return byRole.first();
+  const byRole =
+    a.role && ARIA_ROLES.has(a.role) && a.name
+      ? page.getByRole(a.role as Parameters<Page["getByRole"]>[0], { name: a.name, exact: true }).first()
+      : undefined;
+  for (const candidate of [stamped, byRole]) {
+    if (!candidate || !(await candidate.count())) continue;
+    // Playwright scrolls a target just into view, which can leave it under a sticky header; a
+    // user would scroll it to where they can see it.
+    await candidate.evaluate((el) => el.scrollIntoView({ block: "center", inline: "center" })).catch(() => {});
+    return candidate;
   }
   throw new StaleTargetError(`${describeAction(a)}: the element re-rendered before the click and no longer exists`);
 }
