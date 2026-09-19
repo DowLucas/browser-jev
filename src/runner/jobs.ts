@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { join, resolve } from "node:path";
 import { type Config, resolveConfig } from "../config.ts";
@@ -54,6 +54,29 @@ export interface Job {
 }
 
 export class RequestError extends Error {}
+
+/** What the UI may know about a saved login: never cookie or storage values. */
+export interface AuthStateSummary {
+  name: string;
+  /** Sites the session holds cookies or storage for. */
+  domains: string[];
+  cookies: number;
+  /** Latest cookie expiry (ISO), or null when all cookies end with the browser session. */
+  expiresAt: string | null;
+  savedAt: string;
+}
+
+/** Shape of a Playwright storage state, checked before an uploaded file is stored. */
+function isStorageState(v: unknown): v is { cookies: { domain: string; expires?: number }[]; origins: { origin: string }[] } {
+  if (!v || typeof v !== "object") return false;
+  const s = v as { cookies?: unknown; origins?: unknown };
+  return (
+    Array.isArray(s.cookies) &&
+    Array.isArray(s.origins) &&
+    s.cookies.every((c) => c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string" && typeof (c as { domain?: unknown }).domain === "string") &&
+    s.origins.every((o) => o && typeof o === "object" && typeof (o as { origin?: unknown }).origin === "string")
+  );
+}
 
 /** Upper bounds per run, so one request cannot monopolise the runner for days. */
 export const LIMITS = { sessions: 1000, steps: 500, workers: 16 } as const;
@@ -167,6 +190,48 @@ export class JobStore {
   authPath(name: string): string {
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(name)) throw new RequestError(`Invalid authState name "${name}"`);
     return resolve(this.authDir, `${name}.json`);
+  }
+
+  /** Store a login session (captured in the UI, or uploaded). Owner-only: it is a credential. */
+  async saveAuthState(name: string, state: unknown): Promise<AuthStateSummary> {
+    const path = this.authPath(name);
+    if (!isStorageState(state)) throw new RequestError("Not a Playwright storage state (expected { cookies: [...], origins: [...] })");
+    await writeFile(`${path}.tmp`, JSON.stringify(state), { mode: 0o600 });
+    await rename(`${path}.tmp`, path);
+    return (await this.authSummary(name))!;
+  }
+
+  async listAuthStates(): Promise<AuthStateSummary[]> {
+    const names = (await readdir(this.authDir)).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
+    const all = await Promise.all(names.map((n) => this.authSummary(n).catch(() => undefined)));
+    return all.filter((s): s is AuthStateSummary => s !== undefined).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async deleteAuthState(name: string): Promise<boolean> {
+    return unlink(this.authPath(name)).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  async authSummary(name: string): Promise<AuthStateSummary | undefined> {
+    const path = this.authPath(name);
+    const [raw, info] = await Promise.all([readFile(path, "utf8").catch(() => undefined), stat(path).catch(() => undefined)]);
+    if (!raw || !info) return undefined;
+    const state = JSON.parse(raw) as unknown;
+    if (!isStorageState(state)) return undefined;
+    const expiries = state.cookies.map((c) => c.expires ?? -1).filter((e) => e > 0);
+    const domains = new Set([
+      ...state.cookies.map((c) => c.domain.replace(/^\./, "")),
+      ...state.origins.map((o) => new URL(o.origin).hostname),
+    ]);
+    return {
+      name,
+      domains: [...domains].sort(),
+      cookies: state.cookies.length,
+      expiresAt: expiries.length ? new Date(Math.max(...expiries) * 1000).toISOString() : null,
+      savedAt: info.mtime.toISOString(),
+    };
   }
 
   runDir(id: string): string {

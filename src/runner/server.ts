@@ -24,6 +24,7 @@ import type { RunLog } from "../session.ts";
 import { FairSlots } from "../slots.ts";
 import { detectScreen } from "../watch.ts";
 import { type Job, JobStore, RequestError, type RunRequest, type TargetPolicy } from "./jobs.ts";
+import { LoginManager } from "./login.ts";
 
 export interface RunnerOptions {
   token: string;
@@ -39,6 +40,7 @@ export class Runner {
   readonly store: JobStore;
   readonly slots: FairSlots;
   readonly live = new LiveHub();
+  readonly logins: LoginManager;
   readonly #active = new Map<string, { cancel: () => void }>();
   #browser: Promise<Browser> | undefined;
   #draining = false;
@@ -46,6 +48,7 @@ export class Runner {
   constructor(readonly opts: RunnerOptions) {
     this.store = new JobStore(opts.dataDir, opts.targets);
     this.slots = new FairSlots(opts.contexts);
+    this.logins = new LoginManager(() => this.#getBrowser(), this.slots, this.store);
   }
 
   async start(): Promise<void> {
@@ -83,6 +86,7 @@ export class Runner {
   /** Stop taking new work; running jobs finish their current step, write reports, and are marked interrupted. */
   async drain(): Promise<void> {
     this.#draining = true;
+    await this.logins.closeAll();
     for (const { cancel } of this.#active.values()) cancel();
     while (this.#active.size) await new Promise((r) => setTimeout(r, 200));
     await (await this.#browser)?.close().catch(() => {});
@@ -199,7 +203,7 @@ export function createHandler(runner: Runner) {
     try {
       if (req.method === "GET" && pathname === "/") return send(200, await UI_HTML, "text/html; charset=utf-8");
       if (req.method === "POST" && pathname === "/login") {
-        const { token: given } = (await readJson(req)) as unknown as { token?: string };
+        const { token: given } = await readJson<{ token?: string }>(req);
         if (typeof given !== "string" || !matches(given)) return send(401, { error: "wrong token" });
         const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
         res.setHeader("set-cookie", `${COOKIE}=${given}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secure}`);
@@ -211,6 +215,46 @@ export function createHandler(runner: Runner) {
       }
       if (!authorized(req)) return send(401, { error: "unauthorized" });
       if (req.method === "GET" && pathname === "/live") return runner.live.subscribe(res);
+
+      // Saved login sessions. Summaries only: cookie and storage values never leave the server.
+      if (parts[0] === "auth-states") {
+        const name = parts[1];
+        if (!name && req.method === "GET") return send(200, await runner.store.listAuthStates());
+        if (name && req.method === "PUT") return send(200, await runner.store.saveAuthState(name, await readJson(req, 5_000_000)));
+        if (name && req.method === "DELETE") {
+          runner.store.authPath(name);
+          return (await runner.store.deleteAuthState(name)) ? send(200, { deleted: name }) : send(404, { error: "no such login" });
+        }
+        return send(404, { error: "not found" });
+      }
+
+      // Remote, interactive login browsers.
+      if (parts[0] === "logins") {
+        const [, id, sub] = parts;
+        if (!id && req.method === "POST") {
+          const { url } = await readJson<{ url?: unknown }>(req);
+          if (typeof url !== "string") throw new RequestError("url is required");
+          return send(201, await runner.logins.start(url));
+        }
+        if (id && sub === "stream" && req.method === "GET") {
+          if (!runner.logins.subscribe(id, res)) return send(404, { error: "no such login session" });
+          return;
+        }
+        if (id && sub === "input" && req.method === "POST") {
+          await runner.logins.input(id, await readJson(req));
+          return send(200, { ok: true });
+        }
+        if (id && sub === "save" && req.method === "POST") {
+          const { name } = await readJson<{ name?: unknown }>(req);
+          if (typeof name !== "string") throw new RequestError("name is required");
+          return send(200, await runner.logins.save(id, name));
+        }
+        if (id && !sub && req.method === "DELETE") {
+          await runner.logins.close(id);
+          return send(200, { closed: id });
+        }
+        return send(404, { error: "not found" });
+      }
 
       if (parts[0] !== "runs") return send(404, { error: "not found" });
       if (parts.length === 1 && req.method === "POST") return send(201, await runner.submit(await readJson(req)));
@@ -247,15 +291,15 @@ function cookie(req: IncomingMessage, name: string): string | undefined {
   return undefined;
 }
 
-async function readJson(req: IncomingMessage): Promise<RunRequest> {
+async function readJson<T = RunRequest>(req: IncomingMessage, maxBytes = 1_000_000): Promise<T> {
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 1_000_000) throw new RequestError("Request body too large");
+    if (raw.length > maxBytes) throw new RequestError("Request body too large");
   }
   const body = JSON.parse(raw) as unknown;
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new RequestError("Body must be a JSON object");
-  return body as RunRequest;
+  return body as T;
 }
 
 // --- Entry point -------------------------------------------------------------------------------------

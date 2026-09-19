@@ -128,17 +128,31 @@ function write(res: ServerResponse, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+export interface ScreencastQuality {
+  maxWidth: number;
+  maxHeight: number;
+  /** JPEG quality, 0-100. */
+  quality: number;
+}
+
+/** Small and cheap: fine for many grid thumbnails at once. */
+export const THUMBNAIL: ScreencastQuality = { maxWidth: 640, maxHeight: 400, quality: 55 };
+
 /**
  * Stream the page's screen as JPEG frames via Chromium's screencast, which works headless.
  * Returns a stop function; errors after the page closes are expected and ignored.
  */
-export async function startScreencast(page: Page, onFrame: (jpegBase64: string) => void): Promise<() => void> {
+export async function startScreencast(
+  page: Page,
+  onFrame: (jpegBase64: string) => void,
+  size: ScreencastQuality = THUMBNAIL,
+): Promise<() => void> {
   const cdp = await page.context().newCDPSession(page);
   cdp.on("Page.screencastFrame", ({ data, sessionId }) => {
     onFrame(data);
     cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
   });
-  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 55, maxWidth: 640, maxHeight: 400 });
+  await cdp.send("Page.startScreencast", { format: "jpeg", ...size });
   return () => {
     cdp.send("Page.stopScreencast").catch(() => {});
     cdp.detach().catch(() => {});

@@ -78,6 +78,17 @@
   .status.failed, .status.cancelled, .status.interrupted { color: var(--warn); }
   a { color: var(--accent); }
   .login { max-width: 360px; margin: 12vh auto; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
+  .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 20; display: grid; place-items: center; padding: 16px; }
+  .browser { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(1280px, 100%); display: flex; flex-direction: column; max-height: 100%; }
+  .browser-bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .browser-url { flex: 1; min-width: 200px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .browser-screen { position: relative; outline: none; background: #000; overflow: hidden; }
+  .browser-screen:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+  .browser-screen img { display: block; width: 100%; height: auto; cursor: pointer; user-select: none; -webkit-user-drag: none; }
+  .browser-hint { padding: 6px 10px; font-size: 12px; color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -111,7 +122,7 @@
       <form class="run-form" id="run-form">
         <label>Start URL <input type="text" name="startUrl" placeholder="https://staging.example.dev/" required></label>
         <label>Extra allowed hosts (optional, comma-separated) <input type="text" name="allowedHosts" placeholder="the start URL's domain is always allowed"></label>
-        <label>Saved login session (optional) <input type="text" name="authState" placeholder="e.g. staging"></label>
+        <label>Saved login (optional) <select name="authState" id="auth-select"><option value="">(none)</option></select></label>
         <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000"></label>
         <label>At once (workers) <input type="number" name="workers" value="4" min="1" max="16"></label>
         <label>Steps per session <input type="number" name="steps" value="25" min="1" max="500"></label>
@@ -144,7 +155,37 @@
       </form>
     </section>
 
+    <section class="panel" id="logins-panel">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Saved logins</h2>
+        <div class="row">
+          <input type="text" id="login-url" placeholder="https://app.example.dev/login" style="min-width:280px">
+          <button class="primary" id="login-start">Log in to a site…</button>
+          <label class="btn" style="display:inline-block;cursor:pointer">Upload session file<input type="file" id="login-upload" accept="application/json" hidden></label>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Name</th><th>Sites</th><th>Cookies</th><th>Valid until</th><th>Saved</th><th></th></tr></thead>
+        <tbody id="auth-states"><tr><td colspan="6" class="muted">No saved logins yet.</td></tr></tbody>
+      </table>
+      <div class="error" id="logins-error"></div>
+    </section>
+
     <div class="grid" id="grid"><div class="empty" id="empty">No sessions running. Start a run to watch the browsers here.</div></div>
+
+    <div class="overlay" id="login-window" hidden>
+      <div class="browser">
+        <div class="browser-bar">
+          <button id="login-back" title="Back">←</button>
+          <div class="browser-url" id="login-current-url">loading…</div>
+          <input type="text" id="login-name" placeholder="name, e.g. staging" style="width:170px">
+          <button class="primary" id="login-save">Save login</button>
+          <button id="login-cancel">Cancel</button>
+        </div>
+        <div class="browser-screen" id="login-screen" tabindex="0"><img id="login-img" alt="Remote login browser"></div>
+        <div class="browser-hint">Click the screen, then type as usual. Enter, Tab, Backspace, arrows and paste work; scroll with the mouse wheel. When you are signed in, name the login and save it.</div>
+      </div>
+    </div>
 
     <h2>Recent runs</h2>
     <table>
@@ -295,6 +336,108 @@ function connect() {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+// --- Saved logins ---------------------------------------------------------------------------------
+
+async function refreshLogins() {
+  const states = await api("/auth-states");
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleString() : "end of browser session");
+  $("auth-states").innerHTML = states.length
+    ? states.map((s) => `<tr><td><b>${esc(s.name)}</b></td><td>${s.domains.map(esc).join(", ")}</td><td>${s.cookies}</td>` +
+        `<td>${fmt(s.expiresAt)}</td><td>${new Date(s.savedAt).toLocaleString()}</td>` +
+        `<td><button data-delete-login="${esc(s.name)}">delete</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="muted">No saved logins yet.</td></tr>`;
+  const select = $("auth-select");
+  const current = select.value;
+  select.innerHTML = `<option value="">(none)</option>` + states.map((s) => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("");
+  select.value = states.some((s) => s.name === current) ? current : "";
+}
+
+$("login-upload").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const name = prompt("Name for this login (letters, digits, - and _):", file.name.replace(/\.json$/, ""));
+  if (!name) return;
+  $("logins-error").textContent = "";
+  try {
+    await api(`/auth-states/${encodeURIComponent(name)}`, { method: "PUT", body: await file.text() });
+    refreshLogins();
+  } catch (err) { $("logins-error").textContent = err.message; }
+});
+
+// --- Remote login window: shows the runner's browser, forwards clicks and keys --------------------
+
+let login = null;
+const loginInput = (() => {
+  // Inputs are sent in order, one at a time, so typed text never arrives shuffled.
+  let chain = Promise.resolve();
+  return (input) => {
+    if (!login) return;
+    const id = login.id;
+    chain = chain.then(() => api(`/logins/${id}/input`, { method: "POST", body: JSON.stringify(input) })).catch((err) => {
+      $("login-current-url").textContent = err.message;
+    });
+  };
+})();
+
+$("login-start").addEventListener("click", async () => {
+  const url = $("login-url").value.trim();
+  $("logins-error").textContent = "";
+  if (!url) { $("logins-error").textContent = "Enter the URL of the site's login page first."; return; }
+  try {
+    const { id } = await api("/logins", { method: "POST", body: JSON.stringify({ url }) });
+    login = { id, stream: new EventSource(`/logins/${id}/stream`) };
+    login.stream.addEventListener("frame", (e) => { $("login-img").src = `data:image/jpeg;base64,${JSON.parse(e.data).jpeg}`; });
+    login.stream.addEventListener("meta", (e) => { $("login-current-url").textContent = JSON.parse(e.data).url; });
+    login.stream.addEventListener("closed", () => closeLoginWindow());
+    $("login-name").value = new URL(url).hostname.split(".")[0];
+    $("login-window").hidden = false;
+    $("login-screen").focus();
+  } catch (err) { $("logins-error").textContent = err.message; }
+});
+
+function closeLoginWindow() {
+  login?.stream.close();
+  login = null;
+  $("login-window").hidden = true;
+  $("login-img").removeAttribute("src");
+}
+
+$("login-img").addEventListener("click", (e) => {
+  const r = e.target.getBoundingClientRect();
+  loginInput({ type: "click", x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+  $("login-screen").focus();
+});
+$("login-screen").addEventListener("wheel", (e) => { e.preventDefault(); loginInput({ type: "scroll", dy: Math.round(e.deltaY) }); }, { passive: false });
+const SPECIAL = new Set(["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+$("login-screen").addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return; // leave copy/paste and browser shortcuts alone
+  const key = e.key === "Tab" && e.shiftKey ? "Shift+Tab" : e.key;
+  if (SPECIAL.has(e.key)) loginInput({ type: "key", key });
+  else if (e.key.length === 1) loginInput({ type: "type", text: e.key });
+  else return;
+  e.preventDefault();
+});
+$("login-screen").addEventListener("paste", (e) => {
+  const text = e.clipboardData.getData("text");
+  if (text) loginInput({ type: "type", text });
+  e.preventDefault();
+});
+$("login-back").addEventListener("click", () => loginInput({ type: "back" }));
+$("login-cancel").addEventListener("click", async () => {
+  const id = login?.id;
+  closeLoginWindow();
+  if (id) await api(`/logins/${id}`, { method: "DELETE" }).catch(() => {});
+});
+$("login-save").addEventListener("click", async () => {
+  const name = $("login-name").value.trim();
+  try {
+    await api(`/logins/${login.id}/save`, { method: "POST", body: JSON.stringify({ name }) });
+    closeLoginWindow();
+    refreshLogins();
+  } catch (err) { $("login-current-url").textContent = err.message; }
+});
+
 async function refreshRuns() {
   const [runs, health] = await Promise.all([api("/runs"), fetch("/health").then((r) => r.json())]);
   $("s-active").textContent = health.active.length;
@@ -314,6 +457,12 @@ async function refreshRuns() {
 }
 
 document.addEventListener("click", async (e) => {
+  const loginName = e.target.dataset?.deleteLogin;
+  if (loginName && confirm(`Delete the saved login "${loginName}"?`)) {
+    await api(`/auth-states/${encodeURIComponent(loginName)}`, { method: "DELETE" });
+    refreshLogins();
+    return;
+  }
   const id = e.target.dataset?.cancel;
   if (id) { await api(`/runs/${id}/cancel`, { method: "POST" }); refreshRuns(); }
 });
@@ -325,6 +474,7 @@ document.addEventListener("click", async (e) => {
   $("app").hidden = false;
   connect();
   refreshRuns();
+  refreshLogins();
   setInterval(refreshRuns, 3000);
 })();
 </script>

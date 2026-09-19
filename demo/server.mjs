@@ -108,6 +108,22 @@ const routes = {
   // PLANTED: preferences endpoint is missing.
   "GET /api/preferences": () => [404, "{}"],
 
+  // A minimal login, for testing saved login sessions.
+  "GET /login": () =>
+    layout("Sign in", `<form method="post" action="/login">
+      <label>Username <input name="username" autocomplete="username"></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password"></label>
+      <button type="submit">Sign in</button></form>`),
+  "POST /login": async (req) => {
+    const form = await readForm(req);
+    if (form.username !== "tester" || form.password !== "hunter2") return [401, layout("Sign in", "<p>Wrong username or password.</p>")];
+    return [303, "", { "set-cookie": "demo_session=tester-session; Path=/; HttpOnly; Max-Age=86400", location: "/account" }];
+  },
+  "GET /account": (req) =>
+    /demo_session=tester-session/.test(req.headers.cookie ?? "")
+      ? layout("Your account", "<p>Signed in as tester.</p>")
+      : [303, "", { location: "/login" }],
+
   // PLANTED: dead end, no navigation.
   "GET /help": () => layout("Help", "<p>Contact your administrator.</p>", { withNav: false }),
 
@@ -140,8 +156,8 @@ createServer(async (req, res) => {
   const [handler, params] = match(req.method, pathname);
   try {
     const out = handler ? await handler(req, params) : [404, layout("Not found", "<p>Nothing here.</p>")];
-    const [status, body] = Array.isArray(out) ? out : [200, out];
-    res.writeHead(status, { "content-type": "text/html; charset=utf-8" }).end(body);
+    const [status, body, headers = {}] = Array.isArray(out) ? out : [200, out];
+    res.writeHead(status, { "content-type": "text/html; charset=utf-8", ...headers }).end(body);
   } catch (err) {
     res.writeHead(500, { "content-type": "text/plain" }).end(`Internal Server Error\n\n${err.stack}`);
   }

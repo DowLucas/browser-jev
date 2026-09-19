@@ -58,6 +58,15 @@ npm run explore -- --url https://staging.example.dev/ --mode interact --confirm-
 
 The forbidden-controls list and the production-hostname check apply in every mode. Every report lists the writes that were sent and the ones that were blocked.
 
+## Saved logins
+
+Runs can start signed in, using a saved login session: cookies, localStorage and IndexedDB. Use a throwaway test account, never a real one.
+
+- **In the runner UI (works on a headless server):** under *Saved logins*, enter the site's login URL and click *Log in to a site…*. A live view of a browser on the runner opens; click and type in it as usual (single sign-on redirects work), then name the login and save it.
+- **Upload** a session file captured elsewhere, e.g. with `npm run auth:save -- <url> auth/name.json` on a machine with a display.
+
+Saved logins are stored owner-only in `<data>/auth/`. The API and UI show only which sites they cover, how many cookies they hold, and when they expire, never the values. Pick one in the *New run* form, or pass `"authState": "<name>"` to the API.
+
 ## Runner service (queue + HTTP API)
 
 `src/runner/server.ts` runs exploration jobs from a queue on one shared browser. A global cap on open browser contexts (`RUNNER_CONTEXTS`) is the memory limit. Free slots rotate between active runs, so a big run can't starve a small one. Jobs are files on disk: a restart re-queues whatever was running, and `SIGTERM` lets runs finish their current step and keep their reports.
