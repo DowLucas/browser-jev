@@ -54,6 +54,23 @@ describe("in-page oracles", () => {
     assert.equal(byName(els, "Close").coveredBy, undefined);
   });
 
+  it("ignores links inside a collapsed accordion answer instead of calling them covered", async () => {
+    // One answer open at a time: the closed answer is height 0 with overflow hidden, and the next
+    // question's button sits where its link would be.
+    const els = await elements(`
+      <div><button>01 Open question</button><div style="height:auto">Open answer <a href="/a">Read more</a></div></div>
+      <div><button>02 Closed question</button>
+        <div style="height:0;overflow:hidden"><p>Closed answer</p><a href="/daily-limit">The daily limit, explained</a></div></div>
+      <div><button>03 Next question</button></div>
+      <div inert><a href="/inert">Inert link</a></div>
+      <div style="height:40px;overflow:auto"><div style="height:200px"></div><a href="/scrolled">Scrollable link</a></div>`);
+    const names = els.map((e) => e.name);
+    assert.ok(!names.includes("The daily limit, explained"), "collapsed answer link must not be enumerated");
+    assert.ok(!names.includes("Inert link"));
+    assert.ok(names.includes("Read more") && names.includes("Scrollable link"));
+    assert.ok(els.every((e) => !e.coveredBy));
+  });
+
   it("detects missing in-page anchors and submit buttons", async () => {
     const els = await elements(`
       <a href="#features">Features</a> <a href="#nowhere">Broken</a> <section id="features">F</section>

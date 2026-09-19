@@ -93,6 +93,24 @@ const ENUMERATE_SCRIPT = String.raw`(attr) => {
     return null;
   };
   const MODAL = "dialog[open], [aria-modal=true], [role=dialog], [role=alertdialog]";
+
+  // Hidden without display:none: inside a collapsed accordion (height 0, overflow hidden), or
+  // in inert / aria-hidden content. Its own box still has a size, so the rect check alone would
+  // count it as clickable, and whatever sits on top would look like a covering bug. Scroll
+  // containers (auto/scroll) do not hide anything: the user can scroll to it.
+  const hiddenByAncestor = (el, rect) => {
+    if (el.closest("[inert], [aria-hidden=true]")) return true;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      const st = getComputedStyle(a);
+      const clips = (v) => v === "hidden" || v === "clip";
+      if (!clips(st.overflowX) && !clips(st.overflowY)) continue;
+      const r = a.getBoundingClientRect();
+      const w = Math.min(rect.right, r.right) - Math.max(rect.left, r.left);
+      const h = Math.min(rect.bottom, r.bottom) - Math.max(rect.top, r.top);
+      if ((clips(st.overflowX) && w < 1) || (clips(st.overflowY) && h < 1)) return true;
+    }
+    return false;
+  };
   const maxScroll = Math.max(0, document.documentElement.scrollHeight - innerHeight);
 
   // Covered = the element that would receive a click at the control's center is unrelated to it,
@@ -128,6 +146,7 @@ const ENUMERATE_SCRIPT = String.raw`(attr) => {
     if (rect.width === 0 || rect.height === 0) continue;
     if (style.visibility === "hidden" || style.display === "none") continue;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+    if (hiddenByAncestor(el, rect)) continue;
 
     const id = "e" + i++;
     el.setAttribute(attr, id);
