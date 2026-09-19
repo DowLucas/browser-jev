@@ -1,0 +1,14 @@
+{
+  "startUrl": "https://staging.example.dev/",
+  "allowedHosts": ["staging.example.dev"],
+  "sessions": 16,
+  "workers": 4,
+  "steps": 25,
+  "personas": ["impatient", "sloppy", "out-of-order", "completionist"],
+  "storageStatePath": "auth/test-account.json",
+  "specPath": "spec/current-ticket.md",
+  "baselinePath": "baseline.json",
+  "thresholds": { "warnConfidence": 0.6, "failConfidence": 0.9, "failSeverity": 3 },
+  "freeOracleFailOn": ["page-error", "http-5xx", "crash", "xss-dialog"],
+  "escalateCommand": "claude -p \"Read {ticket}. Write a failing Playwright test that reproduces it, then fix the root cause.\""
+}

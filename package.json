@@ -1,0 +1,28 @@
+{
+  "name": "browser-jev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Adversarial browser exploration with Jev as the oracle and navigator",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "explore": "tsx --env-file-if-exists=.env src/cli.ts",
+    "demo:server": "node demo/server.mjs",
+    "auth:save": "tsx scripts/save-auth.ts",
+    "jev:check": "tsx --env-file-if-exists=.env scripts/jev-check.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "runner": "tsx src/runner/server.ts"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
+    "playwright": "^1.63.0",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "typescript": "^7.0.2"
+  }
+}

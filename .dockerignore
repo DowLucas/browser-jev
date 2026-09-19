@@ -1,0 +1,9 @@
+node_modules
+out
+auth
+runner-data
+.env
+.git
+test
+demo
+scripts
