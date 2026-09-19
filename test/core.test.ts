@@ -78,10 +78,14 @@ describe("candidate actions", () => {
     { id: "e6", role: "link", name: "Home", href: "http://127.0.0.1/start" },
     { id: "e7", role: "link", name: "Pricing section", href: "http://127.0.0.1/start#pricing" },
     { id: "e8", role: "link", name: "Privacy", href: "http://127.0.0.1/privacy", coveredBy: "We use cookies" },
+    { id: "e9", role: "link", name: "Get it on Google Play", href: "https://play.google.com/store/apps/x" },
+    { id: "e10", role: "link", name: "Email us", href: "mailto:hi@example.test" },
   ];
   const base = {
     elements,
     currentUrl: "http://127.0.0.1/start",
+    isInApp: (u: string) => u.startsWith("http://127.0.0.1/"),
+    canGoForward: false,
     visited: [],
     isForbidden: forbiddenMatcher(DEFAULTS.forbiddenPatterns),
     maxActions: 100,
@@ -107,7 +111,14 @@ describe("candidate actions", () => {
     const names = actions.map((a) => a.name);
     assert.ok(!names.includes("Home"), "self-link");
     assert.ok(!names.includes("Privacy"), "covered");
+    assert.ok(!names.includes("Get it on Google Play") && !names.includes("Email us"), "leaves the app");
     assert.equal(actions.find((a) => a.name === "Pricing section")?.inPage, true);
+  });
+
+  it("offers browser forward only when there is somewhere to go forward to", () => {
+    const kinds = (canGoForward: boolean) => candidateActions({ ...base, persona: "out-of-order", canGoForward }).actions.map((a) => a.kind);
+    assert.ok(!kinds(false).includes("forward"));
+    assert.ok(kinds(true).includes("forward"));
   });
 
   it("caps the action count while keeping navigation actions", () => {
@@ -208,6 +219,10 @@ describe("thresholds", () => {
     actionIndex: 0,
     actionConfidence: 1,
     inputTokens: 0,
+  });
+
+  it("does not report what the model itself rates as nothing wrong (severity below 1)", () => {
+    assert.equal(classifyJudgment(judgment(0.7, 0.49), DEFAULTS.thresholds).length, 0);
   });
 
   it("fails only on high confidence and high severity; warns in the band", () => {

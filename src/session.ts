@@ -144,9 +144,13 @@ export async function runSession(
     );
   }
   // Popups are a side channel; keep the session to one page.
+  let popupOpened = false;
   context.on("page", (p) => {
-    if (p !== page) p.close().catch(() => {});
+    if (p === page) return;
+    popupOpened = true;
+    p.close().catch(() => {});
   });
+  let canGoForward = false;
 
   const collector = new SignalCollector(cfg);
   collector.attach(page);
@@ -281,6 +285,8 @@ export async function runSession(
       const { actions, skipped } = candidateActions({
         persona: personaName,
         currentUrl: url,
+        isInApp: (href) => isAppUrl(href, cfg.allowedHosts),
+        canGoForward,
         elements,
         visited,
         isForbidden,
@@ -363,8 +369,16 @@ export async function runSession(
       tried.set(sig, (tried.get(sig) ?? 0) + 1);
       lastActionError = undefined;
       lastActionNote = expectedNoChange(action);
+      popupOpened = false;
       try {
         await executeAction(page, action, cfg.actionTimeoutMs);
+        const moved = page.url() !== url;
+        if (popupOpened) lastActionNote = "the action opened a new tab or window, which the tester closed, so the current page is not expected to change";
+        else if ((action.kind === "back" || action.kind === "forward") && !moved) {
+          lastActionNote = `there was no page to go ${action.kind} to, so nothing is expected to change`;
+        }
+        // Forward only makes sense straight after going back.
+        if (moved) canGoForward = action.kind === "back";
       } catch (err) {
         if (err instanceof StaleTargetError) {
           lastActionNote = `nothing was clicked: the targeted element re-rendered before the click (a test-harness timing issue, not an app bug)`;

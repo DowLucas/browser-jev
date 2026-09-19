@@ -65,7 +65,9 @@ const isThresholds: Check = (v) =>
   typeof v === "object" &&
   !Array.isArray(v) &&
   Object.entries(v).every(([k, x]) =>
-    k === "failSeverity" ? typeof x === "number" && x >= 0 && x <= 4 : ["warnConfidence", "failConfidence"].includes(k) && isProbability(x),
+    ["failSeverity", "warnSeverity"].includes(k)
+      ? typeof x === "number" && x >= 0 && x <= 4
+      : ["warnConfidence", "failConfidence"].includes(k) && isProbability(x),
   );
 
 /**
@@ -81,7 +83,7 @@ const REQUEST_SCHEMA: Record<keyof RunRequest, { check: Check; expected: string 
   personas: { check: isStringArray, expected: "an array of persona names" },
   useModel: { check: isBool, expected: "a boolean" },
   readOnly: { check: isBool, expected: "a boolean" },
-  thresholds: { check: isThresholds, expected: "{warnConfidence, failConfidence: 0-1, failSeverity: 0-4}" },
+  thresholds: { check: isThresholds, expected: "{warnConfidence, failConfidence: 0-1, warnSeverity, failSeverity: 0-4}" },
   extraForbiddenPatterns: { check: isStringArray, expected: "an array of regex strings" },
   spec: { check: isString, expected: "a string" },
   authState: { check: isString, expected: "a string" },

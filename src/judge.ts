@@ -145,7 +145,7 @@ export function classifyJudgment(j: Judgment, t: Thresholds): JudgedIssue[] {
   const issues: JudgedIssue[] = [];
   for (const [key, category] of Object.entries(ORACLE_CATEGORIES) as [OracleKey, string][]) {
     const confidence = j.oracle[key];
-    if (confidence < t.warnConfidence) continue;
+    if (confidence < t.warnConfidence || j.severity < t.warnSeverity) continue;
     const level: Level = confidence >= t.failConfidence && j.severity >= t.failSeverity ? "fail" : "warn";
     issues.push({
       category,

@@ -60,6 +60,10 @@ export interface CandidateContext {
   elements: InteractiveElement[];
   /** The page the elements are on; links back to it are left out. */
   currentUrl: string;
+  /** Whether a URL belongs to the app under test; links elsewhere are not followed. */
+  isInApp: (url: string) => boolean;
+  /** Offer "browser forward" only when there is somewhere to go forward to. */
+  canGoForward: boolean;
   /** URLs visited in this session, oldest first. */
   visited: string[];
   isForbidden: (text: string) => boolean;
@@ -80,6 +84,9 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
     }
     // A covered control cannot be clicked; the cover itself is reported as a finding.
     if (el.coveredBy) continue;
+    // Links out of the app (stores, social, mailto:) are blocked or open a tab we close: they
+    // test nothing here and read as "the click did nothing".
+    if (el.href !== undefined && !ctx.isInApp(el.href)) continue;
     const inPage = el.href !== undefined && withoutHash(el.href) === here;
     // A link to the page we are on tests nothing and reads as "the click did nothing".
     if (inPage && (!new URL(el.href!).hash || el.href === ctx.currentUrl)) continue;
@@ -110,7 +117,7 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
 
   actions.push({ kind: "back" }, { kind: "reload" });
   if (ctx.persona === "out-of-order") {
-    actions.push({ kind: "forward" });
+    if (ctx.canGoForward) actions.push({ kind: "forward" });
     for (const url of new Set(ctx.visited.slice(-8))) actions.push({ kind: "goto", url });
   }
 
