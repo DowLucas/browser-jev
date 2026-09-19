@@ -11,7 +11,8 @@ export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" |
 /** What a client may submit. Anything else is rejected, so the API cannot read files or run commands. */
 export interface RunRequest {
   startUrl: string;
-  allowedHosts: string[];
+  /** Extra hosts beyond the start URL's, which is always allowed. */
+  allowedHosts?: string[];
   sessions?: number;
   workers?: number;
   steps?: number;
@@ -140,7 +141,7 @@ export class JobStore {
       const rule = REQUEST_SCHEMA[key as keyof RunRequest];
       if (value !== undefined && !rule.check(value)) throw new RequestError(`${key} must be ${rule.expected}`);
     }
-    if (!request.startUrl || !request.allowedHosts) throw new RequestError("startUrl and allowedHosts are required");
+    if (!request.startUrl) throw new RequestError("startUrl is required");
     const { extraForbiddenPatterns = [], spec: _spec, authState, readOnly = true, ...rest } = request;
     let cfg: Config;
     try {

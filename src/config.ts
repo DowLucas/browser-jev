@@ -14,7 +14,7 @@ export interface Thresholds {
 
 export interface Config {
   startUrl: string;
-  /** Hosts the browser may talk to. Everything else is blocked. Required. */
+  /** Hosts the browser may talk to; the start URL's host is always included. Everything else is blocked. */
   allowedHosts: string[];
   /** Hostname patterns that mark a target as production; the run refuses to start on a match. */
   productionPatterns: string[];
@@ -102,7 +102,7 @@ const USAGE = `Usage: npm run explore -- [options]
 
   --config <file>          JSON config file (merged over defaults, under flags)
   --url <url>              Start URL
-  --allow <host>           Allowlisted host (repeatable). Required.
+  --allow <host>           Extra allowlisted host (repeatable); the start URL's host is always allowed
   --sessions <n>           Total sessions (default ${DEFAULTS.sessions})
   --workers <n>            Parallel browser contexts (default ${DEFAULTS.workers})
   --steps <n>              Steps per session (default ${DEFAULTS.steps})
@@ -189,9 +189,14 @@ export function resolveConfig(...layers: ConfigLayer[]): Config {
 
 function validate(cfg: Partial<Config>): Config {
   if (!cfg.startUrl) throw new Error(`Missing start URL (--url).\n\n${USAGE}`);
-  if (!cfg.allowedHosts?.length) {
-    throw new Error("Refusing to start: no allowlisted host. Pass --allow <host> explicitly.");
+  let startHost: string;
+  try {
+    startHost = new URL(cfg.startUrl).hostname;
+  } catch {
+    throw new Error(`Invalid start URL "${cfg.startUrl}"`);
   }
+  // The start URL's host is always allowed; extra hosts (an API or CDN domain) are added to it.
+  cfg.allowedHosts = [...new Set([startHost, ...(cfg.allowedHosts ?? [])])];
   for (const p of cfg.personas ?? []) {
     if (!PERSONA_NAMES.includes(p)) throw new Error(`Unknown persona "${p}"`);
   }

@@ -10,7 +10,7 @@ import { createHandler, Runner } from "../src/runner/server.ts";
 
 const DEMO_PORT = 4197;
 const TOKEN = "test-token-0123456789abcdef";
-const demoRun = { startUrl: `http://127.0.0.1:${DEMO_PORT}/`, allowedHosts: ["127.0.0.1"], useModel: false, steps: 4 };
+const demoRun = { startUrl: `http://127.0.0.1:${DEMO_PORT}/`, useModel: false, steps: 4 };
 
 describe("runner service", () => {
   let demo: ChildProcess;
@@ -70,8 +70,9 @@ describe("runner service", () => {
     const cases: [unknown, RegExp][] = [
       [{ ...demoRun, escalateCommand: "rm -rf /" }, /Unknown field/],
       [{ ...demoRun, allowedHosts: "127.0.0.1" }, /allowedHosts must be an array/],
-      [{ ...demoRun, startUrl: "https://www.acme.com/", allowedHosts: ["www.acme.com"] }, /looks like production/],
-      [{ ...demoRun, startUrl: "https://evil.example/" }, /not in the allowlist/],
+      [{ ...demoRun, startUrl: "https://www.acme.com/" }, /looks like production/],
+      [{ ...demoRun, startUrl: "not a url" }, /Invalid start URL/],
+      [{ ...demoRun, allowedHosts: ["api.example.dev", "prod.example.dev"] }, /looks like production/],
       [{ ...demoRun, authState: "../../etc/passwd" }, /Invalid authState/],
       [{ ...demoRun, authState: "missing" }, /No saved login session/],
       [{ ...demoRun, steps: 100000 }, /steps must be an integer/],

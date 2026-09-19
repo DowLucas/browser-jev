@@ -20,10 +20,10 @@ npm run jev:check          # one tiny call to verify the key and question shapes
 npm run demo:server
 
 # Build step 1: free oracle only, random explorer, no model
-npm run explore -- --url http://127.0.0.1:4173/ --allow 127.0.0.1 --no-model
+npm run explore -- --url http://127.0.0.1:4173/ --no-model
 
 # Build step 2: Jev judgment and action selection, one worker, one persona
-npm run explore -- --url http://127.0.0.1:4173/ --allow 127.0.0.1 --sessions 1 --workers 1 --persona sloppy
+npm run explore -- --url http://127.0.0.1:4173/ --sessions 1 --workers 1 --persona sloppy
 
 # Or use a config file (see explorer.config.example.json)
 npm run explore -- --config explorer.config.json
@@ -48,7 +48,7 @@ The exit code is 1 if any non-baselined finding fails, so the run can gate CI.
 RUNNER_TOKEN=$(openssl rand -hex 32) TYPESAFE_API_KEY=... npm run runner
 
 curl -X POST localhost:8080/runs -H "Authorization: Bearer $RUNNER_TOKEN" -H 'content-type: application/json' \
-  -d '{"startUrl":"https://staging.example.dev/","allowedHosts":["staging.example.dev"],"sessions":20,"workers":4,"authState":"staging"}'
+  -d '{"startUrl":"https://staging.example.dev/","sessions":20,"workers":4,"authState":"staging"}'
 ```
 
 | Endpoint | |
@@ -85,7 +85,7 @@ npm run explore -- --config explorer.config.json --baseline baseline.json
 | Personas shape the action set (double-clicks, adversarial input, direct URL entry, unvisited-page hints) and the choice prompt | `src/personas.ts`, `src/actions.ts` |
 | Warning band: fail only on high confidence **and** high severity | `classifyJudgment` in `src/judge.ts` |
 | Fingerprint: category + normalized path (ids and UUIDs collapsed) + trigger. Every way of just arriving at a page counts as one trigger | `src/findings.ts`, `triggerKey` in `src/actions.ts` |
-| Safety: explicit allowlist, refuse production-looking hosts, block all off-allowlist requests, skip forbidden controls by name and href | `src/safety.ts`, `src/config.ts` |
+| Safety: allowlist (start URL host + explicit extras), refuse production-looking hosts, block all off-allowlist requests, skip forbidden controls by name and href | `src/safety.ts`, `src/config.ts` |
 | One browser, many contexts | `src/cli.ts` |
 | Spec/ticket in the state, so intended changes are not flagged | `--spec <file>` |
 

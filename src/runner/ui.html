@@ -103,7 +103,7 @@
     <section class="panel" id="new-run" hidden>
       <form class="run-form" id="run-form">
         <label>Start URL <input type="text" name="startUrl" placeholder="https://staging.example.dev/" required></label>
-        <label>Allowed hosts (comma-separated) <input type="text" name="allowedHosts" placeholder="staging.example.dev" required></label>
+        <label>Extra allowed hosts (optional, comma-separated) <input type="text" name="allowedHosts" placeholder="the start URL's domain is always allowed"></label>
         <label>Saved login session (optional) <input type="text" name="authState" placeholder="e.g. staging"></label>
         <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000"></label>
         <label>At once (workers) <input type="number" name="workers" value="4" min="1" max="16"></label>

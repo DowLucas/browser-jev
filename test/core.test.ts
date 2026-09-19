@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { candidateActions, explainActionFailure, triggerKey } from "../src/actions.ts";
-import { type Config, DEFAULTS } from "../src/config.ts";
+import { type Config, DEFAULTS, resolveConfig } from "../src/config.ts";
 import { FindingStore, fingerprint, normalizePath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
@@ -20,6 +20,18 @@ const cfg = (over: Partial<Config>): Config => ({
 describe("safety", () => {
   it("refuses a start host outside the allowlist", () => {
     assert.throws(() => assertSafeTarget(cfg({ startUrl: "https://staging.acme.dev/" })), SafetyError);
+  });
+
+  it("always allows the start URL's host, keeping extra hosts", () => {
+    assert.deepEqual(resolveConfig({ startUrl: "https://staging.acme.dev/x" }).allowedHosts, ["staging.acme.dev"]);
+    assert.deepEqual(
+      resolveConfig({ startUrl: "https://staging.acme.dev/", allowedHosts: ["api.acme.dev", "staging.acme.dev"] }).allowedHosts,
+      ["staging.acme.dev", "api.acme.dev"],
+    );
+  });
+
+  it("still refuses a production-looking start host once it is auto-allowed", () => {
+    assert.throws(() => assertSafeTarget(resolveConfig({ startUrl: "https://www.acme.com/" })), /looks like production/);
   });
 
   it("refuses production-looking hosts even when allowlisted", () => {
