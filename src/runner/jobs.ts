@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { join, resolve } from "node:path";
-import { type Config, resolveConfig } from "../config.ts";
+import { type Config, MAX_PARALLEL_SESSIONS, resolveConfig } from "../config.ts";
+import { BUILT_IN_PERSONAS, type Persona, resolvePersonas, validatePersona } from "../personas.ts";
 import type { RunSummary } from "../report.ts";
 import { assertSafeTarget, type Mode, MODES } from "../safety.ts";
 
@@ -16,7 +17,8 @@ export interface RunRequest {
   sessions?: number;
   workers?: number;
   steps?: number;
-  personas?: Config["personas"];
+  /** Names from the runner's persona library; all of them when left out. */
+  personas?: string[];
   useModel?: boolean;
   /** What may reach the server; defaults to observe (nothing but reads). */
   mode?: Mode;
@@ -49,6 +51,8 @@ export interface Job {
   startedAt?: string;
   finishedAt?: string;
   request: RunRequest;
+  /** The persona definitions as they were at submission, so a later edit does not change a queued run. */
+  personas?: Persona[];
   outcome?: RunOutcomeSummary;
   error?: string;
 }
@@ -79,7 +83,7 @@ function isStorageState(v: unknown): v is { cookies: { domain: string; expires?:
 }
 
 /** Upper bounds per run, so one request cannot monopolise the runner for days. */
-export const LIMITS = { sessions: 1000, steps: 500, workers: 16 } as const;
+export const LIMITS = { sessions: 1000, steps: 500, workers: MAX_PARALLEL_SESSIONS } as const;
 
 type Check = (v: unknown) => boolean;
 const isString: Check = (v) => typeof v === "string";
@@ -150,6 +154,9 @@ export class JobStore {
   readonly jobsDir: string;
   readonly runsDir: string;
   readonly authDir: string;
+  readonly personasPath: string;
+  /** Persona edits are read-modify-write on one file; this keeps them in order. */
+  #personaWrites: Promise<unknown> = Promise.resolve();
 
   constructor(
     readonly dataDir: string,
@@ -158,14 +165,18 @@ export class JobStore {
     this.jobsDir = join(dataDir, "jobs");
     this.runsDir = join(dataDir, "runs");
     this.authDir = join(dataDir, "auth");
+    this.personasPath = join(dataDir, "personas.json");
   }
 
   async init(): Promise<void> {
     for (const dir of [this.jobsDir, this.runsDir, this.authDir]) await mkdir(dir, { recursive: true });
   }
 
-  /** Validate a request the same way a run would, so bad requests fail at submission, not later. */
-  toConfig(request: RunRequest): Config {
+  /**
+   * Validate a request the same way a run would, so bad requests fail at submission, not later.
+   * Persona names resolve against `library`: the runner's library at submission, the job's snapshot after.
+   */
+  toConfig(request: RunRequest, library: readonly Persona[]): Config {
     const unknown = Object.keys(request).filter((k) => !(k in REQUEST_SCHEMA));
     if (unknown.length) throw new RequestError(`Unknown field(s): ${unknown.join(", ")}`);
     for (const [key, value] of Object.entries(request)) {
@@ -173,10 +184,11 @@ export class JobStore {
       if (value !== undefined && !rule.check(value)) throw new RequestError(`${key} must be ${rule.expected}`);
     }
     if (!request.startUrl) throw new RequestError("startUrl is required");
-    const { extraForbiddenPatterns = [], spec: _spec, authState, ...rest } = request;
+    const { extraForbiddenPatterns = [], spec: _spec, authState, personas, ...rest } = request;
     let cfg: Config;
     try {
-      cfg = resolveConfig({ ...rest, storageStatePath: authState && this.authPath(authState) });
+      const chosen = personas ? resolvePersonas(personas, library) : [...library];
+      cfg = resolveConfig({ ...rest, personas: chosen, storageStatePath: authState && this.authPath(authState) });
       cfg.forbiddenPatterns = [...cfg.forbiddenPatterns, ...extraForbiddenPatterns];
       for (const p of cfg.forbiddenPatterns) new RegExp(p);
       assertSafeTarget(cfg);
@@ -234,6 +246,60 @@ export class JobStore {
     };
   }
 
+  /** The persona library: the built-ins until someone edits it, then whatever was saved. */
+  async listPersonas(): Promise<Persona[]> {
+    const raw = await readFile(this.personasPath, "utf8").catch(() => undefined);
+    if (raw === undefined) return [...BUILT_IN_PERSONAS];
+    return (JSON.parse(raw) as unknown[]).map(validatePersona);
+  }
+
+  /** Add a persona, or replace the one named `previousName` (which may differ, for a rename). */
+  savePersona(value: unknown, previousName?: string): Promise<Persona> {
+    return this.#editPersonas((list) => {
+      let persona: Persona;
+      try {
+        persona = validatePersona(value);
+      } catch (err) {
+        throw new RequestError((err as Error).message);
+      }
+      const at = previousName === undefined ? -1 : list.findIndex((p) => p.name === previousName);
+      if (previousName !== undefined && at < 0) throw new RequestError(`No persona "${previousName}"`);
+      if (list.some((p, i) => p.name === persona.name && i !== at)) throw new RequestError(`A persona named "${persona.name}" already exists`);
+      if (at >= 0) list[at] = persona;
+      else list.push(persona);
+      return { list, result: persona };
+    });
+  }
+
+  deletePersona(name: string): Promise<boolean> {
+    return this.#editPersonas((list) => {
+      const rest = list.filter((p) => p.name !== name);
+      if (rest.length === list.length) return { list, result: false };
+      if (!rest.length) throw new RequestError("Keep at least one persona: a run needs someone to explore with");
+      return { list: rest, result: true };
+    });
+  }
+
+  /** Put the built-ins back as shipped (edited ones are reset, deleted ones return); custom personas stay. */
+  restoreBuiltInPersonas(): Promise<Persona[]> {
+    return this.#editPersonas((list) => {
+      const custom = list.filter((p) => !BUILT_IN_PERSONAS.some((b) => b.name === p.name));
+      const next = [...BUILT_IN_PERSONAS, ...custom];
+      return { list: next, result: next };
+    });
+  }
+
+  #editPersonas<T>(edit: (list: Persona[]) => { list: Persona[]; result: T }): Promise<T> {
+    const run = this.#personaWrites.then(async () => {
+      const { list, result } = edit(await this.listPersonas());
+      await writeFile(`${this.personasPath}.tmp`, JSON.stringify(list, null, 2));
+      await rename(`${this.personasPath}.tmp`, this.personasPath);
+      return result;
+    });
+    this.#personaWrites = run.catch(() => {});
+    return run;
+  }
+
   runDir(id: string): string {
     return join(this.runsDir, id);
   }
@@ -243,13 +309,13 @@ export class JobStore {
   }
 
   async create(request: RunRequest): Promise<Job> {
-    this.toConfig(request);
+    const { personas } = this.toConfig(request, await this.listPersonas());
     if (request.authState) {
       await access(this.authPath(request.authState)).catch(() => {
         throw new RequestError(`No saved login session "${request.authState}" in ${this.authDir}`);
       });
     }
-    const job: Job = { id: randomUUID(), status: "queued", createdAt: new Date().toISOString(), request };
+    const job: Job = { id: randomUUID(), status: "queued", createdAt: new Date().toISOString(), request, personas };
     await this.save(job);
     return job;
   }

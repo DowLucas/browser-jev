@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { startScreencast } from "../live.ts";
+import { BUILT_IN_PERSONAS } from "../personas.ts";
 import type { FairSlots, Slot } from "../slots.ts";
 import { type AuthStateSummary, type JobStore, RequestError } from "./jobs.ts";
 
@@ -61,7 +62,7 @@ export class LoginManager {
 
   async start(url: string): Promise<{ id: string }> {
     // Same production and internal-address checks as a run on this URL.
-    this.store.toConfig({ startUrl: url });
+    this.store.toConfig({ startUrl: url }, BUILT_IN_PERSONAS);
     const slot = await this.slots.acquire("login");
     const context = await (await this.browser()).newContext({
       viewport: VIEWPORT,

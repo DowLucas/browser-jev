@@ -16,7 +16,7 @@ import type { Config } from "./config.ts";
 import { fingerprint, type Finding } from "./findings.ts";
 import { classifyJudgment, judgeStep, type Judgment } from "./judge.ts";
 import { ariaSnapshot, enumerateElements, invalidFields, isBlank, layoutIssues } from "./page-model.ts";
-import { PERSONAS, type PersonaName } from "./personas.ts";
+import type { Persona } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
 import { type LiveSink, startScreencast } from "./live.ts";
 import { Settler } from "./settle.ts";
@@ -28,12 +28,13 @@ import {
   isGatewayError,
   NETWORK_FAILURE,
   SignalCollector,
+  type Signals,
   summarizeSignals,
 } from "./signals.ts";
 
 export interface JudgmentRecord {
   sessionId: string;
-  persona: PersonaName;
+  persona: string;
   step: number;
   url: string;
   oracle: Judgment["oracle"];
@@ -45,7 +46,7 @@ export interface JudgmentRecord {
 
 export interface SessionResult {
   sessionId: string;
-  persona: PersonaName;
+  persona: string;
   findings: Finding[];
   judgments: JudgmentRecord[];
   actionLog: string[];
@@ -88,12 +89,12 @@ export const consoleLog: RunLog = { info: (l) => console.log(l), warn: (l) => co
 export async function runSession(
   deps: SessionDeps,
   sessionId: string,
-  personaName: PersonaName,
+  persona: Persona,
 ): Promise<SessionResult> {
   const { browser, cfg, client } = deps;
   const log = deps.log ?? consoleLog;
   const random = deps.random ?? Math.random;
-  const persona = PERSONAS[personaName];
+  const personaName = persona.name;
   const isForbidden = forbiddenMatcher(cfg.forbiddenPatterns);
 
   const result: SessionResult = {
@@ -139,7 +140,7 @@ export async function runSession(
   await Settler.install(context);
   const page = await context.newPage();
   const settler = new Settler(page);
-  const settle = () => settler.wait(page, SETTLE[personaName === "impatient" ? "impatient" : "normal"]);
+  const settle = () => settler.wait(page, SETTLE[persona.traits.includes("hasty") ? "hasty" : "normal"]);
   const live = deps.live;
   live?.started(sessionId, { persona: personaName, steps: cfg.steps });
   const stopScreencast = live
@@ -240,7 +241,7 @@ export async function runSession(
       if (visited.at(-1) !== url) visited.push(url);
 
       // 1. Free oracle: code-only checks, before any model call.
-      const signals = collector.drain();
+      const signals = withoutExpectedRejection(collector.drain(), lastAction);
       const fenceBlocked = blockedSinceDrain;
       blockedSinceDrain = 0;
       recordFree(freeOracle(signals, await isBlank(page)), url, step, fenceBlocked);
@@ -293,7 +294,7 @@ export async function runSession(
       }
 
       const { actions, skipped } = candidateActions({
-        persona: personaName,
+        persona,
         currentUrl: url,
         isInApp: (href) => isAppUrl(href, cfg.allowedHosts),
         canGoForward,
@@ -440,7 +441,31 @@ export async function runSession(
 function expectedNoChange(a: Action): string | undefined {
   if (a.inPage) return "the link jumps to a section of the current page, so the page content is not expected to change";
   if (a.kind === "dblclick") return "a double-click on a control that toggles returns it to its original state, so no change may be expected";
+  if (a.kind === "press" && !a.target) {
+    return `${a.key} only has an effect while a dialog, menu or popup is open; with none open, no change is expected`;
+  }
+  if (a.tamper) {
+    return (
+      `the tester deliberately edited the URL (${a.tamper}). A clear not-found, invalid-request or access-denied page ` +
+      "is the correct response and not a bug; a crash, raw error, stack trace, blank page or another record's data is"
+    );
+  }
   return undefined;
+}
+
+/**
+ * A 4xx on the very URL the tester edited is the app correctly refusing it, as is the browser's
+ * console line about that response. Everything else, including a 5xx there, still counts.
+ */
+function withoutExpectedRejection(signals: Signals, last: Action | undefined): Signals {
+  if (!last?.tamper || !last.url) return signals;
+  const refused = (e: Signals["httpErrors"][number]) => e.method === "GET" && e.url === last.url && e.status >= 400 && e.status < 500;
+  if (!signals.httpErrors.some(refused)) return signals;
+  return {
+    ...signals,
+    httpErrors: signals.httpErrors.filter((e) => !refused(e)),
+    consoleErrors: signals.consoleErrors.filter((c) => !/^Failed to load resource: the server responded with a status of 4\d\d/.test(c)),
+  };
 }
 
 function describeTarget(a: Action): string {
@@ -448,13 +473,13 @@ function describeTarget(a: Action): string {
 }
 
 /**
- * How long to wait for the page to settle before judging it. The impatient persona acts on a short
+ * How long to wait for the page to settle before judging it. A hasty persona acts on a short
  * fuse (that is the point), but every persona is judged on a page that has stopped changing:
  * judging a half-rendered page is how "the click did nothing" false positives happen.
  */
 const SETTLE = {
   normal: { quietMs: 300, timeoutMs: 6_000 },
-  impatient: { quietMs: 150, timeoutMs: 1_500 },
+  hasty: { quietMs: 150, timeoutMs: 1_500 },
 } as const;
 
 function actionNotes(a: Action, tried: Map<string, number>, visited: readonly string[]): string {

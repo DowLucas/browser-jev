@@ -4,7 +4,14 @@
   "sessions": 16,
   "workers": 4,
   "steps": 25,
-  "personas": ["impatient", "sloppy", "out-of-order", "completionist"],
+  "personas": [
+    "impatient", "sloppy", "boundary", "url-tamperer", "keyboard",
+    {
+      "name": "checkout-hunter",
+      "strategy": "You go straight for the cart and checkout. You change quantities after adding items, apply and remove discount codes, and hunt for totals that do not add up.",
+      "traits": ["boundary-input", "history"]
+    }
+  ],
   "storageStatePath": "auth/test-account.json",
   "specPath": "spec/current-ticket.md",
   "baselinePath": "baseline.json",

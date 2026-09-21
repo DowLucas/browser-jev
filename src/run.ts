@@ -80,7 +80,7 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
       try {
         if (stopped()) break;
         const persona = cfg.personas[index % cfg.personas.length]!;
-        const sessionId = `s${String(index).padStart(3, "0")}-${persona}`;
+        const sessionId = `s${String(index).padStart(3, "0")}-${persona.name}`;
         const window = deps.screen && tileBounds(slot.index, deps.slots.capacity, deps.screen);
         const result = await runSession(
           { browser: deps.browser, cfg, client, spec, traceDir, window, log, live: deps.live, shouldStop: stopped },

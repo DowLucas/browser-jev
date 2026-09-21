@@ -8,13 +8,13 @@ services:
     env_file: .env
     environment:
       RUNNER_DATA: /data
-      # Browser contexts open at once across all runs; about 0.3-0.5 GB each.
-      RUNNER_CONTEXTS: "6"
+      # Browser contexts (sessions) open at once across all runs; about 0.3-0.5 GB each. 10 is the maximum.
+      RUNNER_CONTEXTS: "10"
       RUNNER_ACTIVE_RUNS: "2"
     user: "1000:1000"
     init: true
     # Chromium uses /dev/shm heavily; Docker's 64 MB default crashes tabs.
-    shm_size: "2gb"
+    shm_size: "3gb"
     mem_limit: "8g"
     volumes:
       - ${RUNNER_DATA_DIR:-./data}:/data

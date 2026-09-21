@@ -79,12 +79,47 @@ describe("runner service", () => {
       [{ ...demoRun, mode: "interact" }, /Confirm the environment is disposable/],
       [{ ...demoRun, mode: "observe-writes" }, /at least one allowed write path/],
       [{ ...demoRun, mode: "yolo" }, /mode must be one of/],
+      [{ ...demoRun, workers: 11 }, /workers must be an integer 1-10/],
+      [{ ...demoRun, personas: ["no-such-agent"] }, /Unknown persona "no-such-agent"/],
+      [{ ...demoRun, personas: [{ name: "inline", strategy: "x", traits: [] }] }, /personas must be an array of persona names/],
     ];
     for (const [body, error] of cases) {
       const res = await submit(body);
       assert.equal(res.status, 400, JSON.stringify(body));
       assert.match(res.body.error, error);
     }
+  });
+
+  it("keeps a persona library: add, edit, rename, delete, restore, and snapshot it into submitted runs", async () => {
+    const { body: initial } = await api("/personas");
+    assert.ok(initial.personas.some((p: { name: string }) => p.name === "url-tamperer"));
+    assert.ok("keyboard" in initial.traits);
+
+    const agent = { name: "checkout-hunter", strategy: "You go straight to checkout.", traits: ["history"] };
+    assert.equal((await api("/personas", { method: "POST", body: JSON.stringify(agent) })).status, 201);
+    assert.match((await api("/personas", { method: "POST", body: JSON.stringify(agent) })).body.error, /already exists/);
+    assert.match((await api("/personas", { method: "POST", body: JSON.stringify({ ...agent, name: "x2", traits: ["mind-reading"] }) })).body.error, /traits must be/);
+
+    // A queued run keeps the definition it was submitted with, whatever happens to the library later.
+    const { body: job } = await submit({ ...demoRun, personas: ["checkout-hunter"] });
+    assert.equal(job.personas[0].strategy, agent.strategy);
+
+    const renamed = { ...agent, name: "cart-hunter", strategy: "You live in the cart." };
+    assert.equal((await api("/personas/checkout-hunter", { method: "PUT", body: JSON.stringify(renamed) })).status, 200);
+    const { body: after } = await api("/personas");
+    assert.ok(after.personas.some((p: { name: string }) => p.name === "cart-hunter"));
+    assert.ok(!after.personas.some((p: { name: string }) => p.name === "checkout-hunter"));
+    assert.match((await submit({ ...demoRun, personas: ["checkout-hunter"] })).body.error, /Unknown persona/);
+
+    assert.equal((await api("/personas/sloppy", { method: "DELETE" })).status, 200);
+    assert.equal((await api("/personas/sloppy", { method: "DELETE" })).status, 404);
+    const { body: restored } = await api("/personas/restore-built-ins", { method: "POST" });
+    assert.ok(restored.some((p: { name: string }) => p.name === "sloppy"));
+    assert.ok(restored.some((p: { name: string }) => p.name === "cart-hunter"), "custom agents survive a restore");
+
+    await api(`/runs/${job.id}/cancel`, { method: "POST" });
+    await waitFor(job.id, ["cancelled", "done"]);
+    await api("/personas/cart-hunter", { method: "DELETE" });
   });
 
   it("queues runs beyond the active limit, runs them in order, and cancels a queued one", async () => {

@@ -1,6 +1,6 @@
 import type { Locator, Page } from "playwright";
 import { TARGET_ATTR, type InteractiveElement } from "./page-model.ts";
-import type { PersonaName } from "./personas.ts";
+import type { Persona } from "./personas.ts";
 import { XSS_MARKER } from "./signals.ts";
 
 export type ActionKind =
@@ -12,7 +12,8 @@ export type ActionKind =
   | "back"
   | "forward"
   | "reload"
-  | "goto";
+  | "goto"
+  | "press";
 
 export interface Action {
   kind: ActionKind;
@@ -25,6 +26,10 @@ export interface Action {
   /** Human label for `value`, e.g. "600 chars"; keeps descriptions and fingerprints short. */
   valueLabel?: string;
   url?: string;
+  /** For "press": the key, e.g. "Enter". */
+  key?: string;
+  /** For a "goto" that edits a URL on purpose: what was changed, e.g. "id 7 -> 999999999". */
+  tamper?: string;
   /** A "#section" link on the current page: it scrolls, so an unchanged page is expected. */
   inPage?: boolean;
 }
@@ -45,6 +50,34 @@ const ADVERSARIAL_INPUTS: FillValue[] = [
   { label: "negative number", value: "-1" },
 ];
 
+/** Edge values per input type. Each is a value the browser accepts for that type, so fill() succeeds. */
+const BOUNDARY_INPUTS: Record<string, FillValue[]> = {
+  number: [
+    { label: "zero", value: "0" },
+    { label: "negative number", value: "-1" },
+    { label: "fraction", value: "0.5" },
+    { label: "huge number", value: "99999999999999999999" },
+    { label: "leading zeros", value: "007" },
+  ],
+  date: [
+    { label: "leap day", value: "2024-02-29" },
+    { label: "year 0001", value: "0001-01-01" },
+    { label: "year 9999", value: "9999-12-31" },
+  ],
+  email: [
+    { label: "minimal email", value: "a@b" },
+    { label: "uppercase email", value: "JEV.TESTER@EXAMPLE.TEST" },
+    { label: "254-char email", value: `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(57)}.test` },
+  ],
+  text: [
+    { label: "one character", value: "a" },
+    { label: "256 chars", value: "B".repeat(256) },
+    { label: "surrounding spaces", value: "  padded value  " },
+    { label: "literal null", value: "null" },
+    { label: "zero", value: "0" },
+  ],
+};
+
 const PLAUSIBLE_INPUTS: Record<string, string> = {
   email: "jev.tester@example.test",
   number: "2",
@@ -56,7 +89,7 @@ const PLAUSIBLE_INPUTS: Record<string, string> = {
 };
 
 export interface CandidateContext {
-  persona: PersonaName;
+  persona: Persona;
   elements: InteractiveElement[];
   /** The page the elements are on; links back to it are left out. */
   currentUrl: string;
@@ -75,6 +108,7 @@ export interface CandidateContext {
 export function candidateActions(ctx: CandidateContext): { actions: Action[]; skipped: number } {
   const actions: Action[] = [];
   let skipped = 0;
+  const has = (t: Persona["traits"][number]) => ctx.persona.traits.includes(t);
 
   const here = withoutHash(ctx.currentUrl);
   for (const el of ctx.elements) {
@@ -96,6 +130,8 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
         for (const v of fillValues(ctx.persona, el.inputType, ctx.random)) {
           actions.push({ ...base, kind: "fill", value: v.value, valueLabel: v.label });
         }
+        // Enter in a field is how keyboard users submit a form.
+        if (has("keyboard")) actions.push({ ...base, kind: "press", key: "Enter" });
         break;
       case "combobox":
         for (const option of el.options ?? []) {
@@ -106,19 +142,29 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
         actions.push({ ...base, kind: "click" });
         // Double submits and navigate-away races live on submit buttons. On a toggle, a
         // double-click just restores the original state, which reads as "did nothing".
-        if (ctx.persona === "impatient" && el.submit) {
+        if (has("double-submit") && el.submit) {
           actions.push({ ...base, kind: "dblclick" }, { ...base, kind: "click-and-leave" });
         }
+        if (has("keyboard")) actions.push({ ...base, kind: "press", key: "Enter" });
         break;
       default:
         actions.push({ ...base, kind: "click" });
+        // A control built from a div with a click handler does nothing on Enter: a real bug.
+        if (has("keyboard") && (el.role === "link" || el.role === "tab" || el.role === "menuitem")) {
+          actions.push({ ...base, kind: "press", key: "Enter" });
+        }
     }
   }
 
   actions.push({ kind: "back" }, { kind: "reload" });
-  if (ctx.persona === "out-of-order") {
+  if (has("keyboard")) actions.push({ kind: "press", key: "Escape" });
+  if (has("history")) {
     if (ctx.canGoForward) actions.push({ kind: "forward" });
     for (const url of new Set(ctx.visited.slice(-8))) actions.push({ kind: "goto", url });
+  }
+  if (has("url-tamper")) {
+    const tampered = shuffle(tamperedUrls(ctx.currentUrl), ctx.random).slice(0, MAX_TAMPERED);
+    for (const t of tampered) if (ctx.isInApp(t.url)) actions.push({ kind: "goto", url: t.url, tamper: t.change });
   }
 
   return { actions: capActions(actions, ctx.maxActions, ctx.random), skipped };
@@ -134,10 +180,70 @@ function withoutHash(url: string): string {
   }
 }
 
-function fillValues(persona: PersonaName, inputType = "text", random: () => number): FillValue[] {
-  const plausible = { label: "plausible", value: PLAUSIBLE_INPUTS[inputType] ?? "Test input" };
-  if (persona !== "sloppy") return [plausible];
-  return [plausible, ...shuffle(ADVERSARIAL_INPUTS, random).slice(0, 4)];
+function fillValues(persona: Persona, inputType = "text", random: () => number): FillValue[] {
+  const values = [{ label: "plausible", value: PLAUSIBLE_INPUTS[inputType] ?? "Test input" }];
+  if (persona.traits.includes("adversarial-input")) values.push(...shuffle(ADVERSARIAL_INPUTS, random).slice(0, 4));
+  if (persona.traits.includes("boundary-input")) {
+    // Types without their own edge set (tel, url, search) get the text ones, which they all accept.
+    const edges = BOUNDARY_INPUTS[inputType] ?? (inputType === "date" || inputType === "number" ? [] : BOUNDARY_INPUTS.text!);
+    values.push(...shuffle(edges, random).slice(0, 4));
+  }
+  return values;
+}
+
+/** Tampered URLs offered per step; each is a full page load, so a few is plenty. */
+const MAX_TAMPERED = 4;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Edits of the current URL that a curious user makes in the address bar: ids moved to a neighbour,
+ * zero or a huge value, query values emptied or made negative, and the parent path.
+ */
+export function tamperedUrls(current: string): { url: string; change: string }[] {
+  let base: URL;
+  try {
+    base = new URL(current);
+  } catch {
+    return [];
+  }
+  base.hash = "";
+  const out = new Map<string, string>();
+  const add = (edit: (u: URL) => void, change: string) => {
+    const u = new URL(base.href);
+    edit(u);
+    if (u.href !== base.href && !out.has(u.href)) out.set(u.href, change);
+  };
+  const segments = base.pathname.split("/");
+  segments.forEach((seg, i) => {
+    const setSeg = (value: string) => (u: URL) => {
+      const copy = [...segments];
+      copy[i] = value;
+      u.pathname = copy.join("/");
+    };
+    if (/^\d+$/.test(seg)) {
+      const n = BigInt(seg);
+      add(setSeg(String(n + 1n)), `id ${seg} -> ${n + 1n}`);
+      if (n > 0n) add(setSeg(String(n - 1n)), `id ${seg} -> ${n - 1n}`);
+      add(setSeg("0"), `id ${seg} -> 0`);
+      add(setSeg("999999999"), `id ${seg} -> 999999999`);
+      add(setSeg("-1"), `id ${seg} -> -1`);
+    } else if (UUID.test(seg)) {
+      add(setSeg("00000000-0000-0000-0000-000000000000"), "uuid -> all zeros");
+      add(setSeg(seg.slice(0, -1)), "uuid truncated");
+    }
+  });
+  const parent = segments.filter(Boolean);
+  if (parent.length > 1) add((u) => (u.pathname = `/${parent.slice(0, -1).join("/")}`), "parent path");
+  for (const [key, value] of base.searchParams) {
+    add((u) => u.searchParams.set(key, ""), `?${key} emptied`);
+    if (/^\d+$/.test(value)) {
+      add((u) => u.searchParams.set(key, "-1"), `?${key}=${value} -> -1`);
+      add((u) => u.searchParams.set(key, "999999999"), `?${key}=${value} -> 999999999`);
+    } else {
+      add((u) => u.searchParams.set(key, "jev-unknown"), `?${key} -> unknown value`);
+    }
+  }
+  return [...out].map(([url, change]) => ({ url, change }));
 }
 
 /** Keep navigation actions, sample the rest, so the choice stays within the question limit. */
@@ -170,7 +276,9 @@ export function describeAction(a: Action): string {
     case "click-and-leave":
       return `click ${target} and immediately navigate back`;
     case "goto":
-      return `enter URL directly: ${a.url}`;
+      return a.tamper ? `enter edited URL (${a.tamper}): ${a.url}` : `enter URL directly: ${a.url}`;
+    case "press":
+      return a.target ? `press ${a.key} on ${target}` : `press ${a.key}`;
     case "back":
     case "forward":
     case "reload":
@@ -183,7 +291,7 @@ export function describeAction(a: Action): string {
 /** Stable identity of an action, independent of step-local ids and digits in names. */
 export function actionSignature(a: Action): string {
   const name = (a.name ?? "").toLowerCase().replace(/\d+/g, "#");
-  return [a.kind, a.role ?? "", name, a.valueLabel ?? "", a.url ? new URL(a.url).pathname : ""].join("|");
+  return [a.kind, a.role ?? "", name, a.valueLabel ?? a.key ?? a.tamper?.replace(/\d+/g, "#") ?? "", a.url && !a.tamper ? new URL(a.url).pathname : ""].join("|");
 }
 
 const NAVIGATION_KINDS: ReadonlySet<ActionKind> = new Set(["back", "forward", "reload", "goto"]);
@@ -193,7 +301,9 @@ const NAVIGATION_KINDS: ReadonlySet<ActionKind> = new Set(["back", "forward", "r
  * direct entry, following a link) collapses to one key, so a bug on load is one finding, not five.
  */
 export function triggerKey(a: Action | undefined): string {
-  if (!a || NAVIGATION_KINDS.has(a.kind) || (a.kind === "click" && a.role === "link")) return "navigate";
+  // Enter on a link and an edited URL are ways of arriving too; the finding's trigger text keeps which.
+  const followsLink = (a?.kind === "click" || a?.kind === "press") && a.role === "link";
+  if (!a || NAVIGATION_KINDS.has(a.kind) || followsLink) return "navigate";
   return actionSignature(a);
 }
 
@@ -275,6 +385,10 @@ export async function executeAction(page: Page, a: Action, timeout: number): Pro
       return;
     case "goto":
       await page.goto(a.url ?? "", { timeout });
+      return;
+    case "press":
+      if (a.target) await (await target()).press(a.key ?? "Enter", { timeout });
+      else await page.keyboard.press(a.key ?? "Escape");
       return;
   }
 }

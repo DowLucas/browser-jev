@@ -9,7 +9,6 @@
     --bg: #0e1116; --panel: #161b22; --panel-2: #1c222b; --border: #2a313c;
     --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
     --ok: #3fb950; --warn: #d29922; --fail: #f85149;
-    --impatient: #f0883e; --sloppy: #db61a2; --out-of-order: #a371f7; --completionist: #3fb9a8;
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; }
@@ -56,7 +55,7 @@
   section.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
   form.run-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; align-items: end; }
   label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  input[type=text], input[type=number], input[type=password] {
+  input[type=text], input[type=number], input[type=password], textarea {
     background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit;
   }
   .checks { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text); font-size: 13px; }
@@ -89,6 +88,19 @@
   .browser-screen:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .browser-screen img { display: block; width: 100%; height: auto; cursor: pointer; user-select: none; -webkit-user-drag: none; }
   .browser-hint { padding: 6px 10px; font-size: 12px; color: var(--muted); }
+  textarea { resize: vertical; min-height: 96px; line-height: 1.45; }
+  .persona-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+  .persona-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; align-content: start; }
+  .persona-card .row { justify-content: space-between; align-items: center; }
+  .persona-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .chip { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag-builtin { font-size: 11px; color: var(--muted); }
+  form.persona-form { display: grid; gap: 10px; margin-bottom: 12px; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
+  .traits { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 14px; }
+  .traits label { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 13px; }
+  .traits small { display: block; color: var(--muted); font-size: 12px; }
+  button.small { padding: 3px 9px; font-size: 12px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -124,14 +136,11 @@
         <label>Extra allowed hosts (optional, comma-separated) <input type="text" name="allowedHosts" placeholder="the start URL's domain is always allowed"></label>
         <label>Saved login (optional) <select name="authState" id="auth-select"><option value="">(none)</option></select></label>
         <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000"></label>
-        <label>At once (workers) <input type="number" name="workers" value="4" min="1" max="16"></label>
+        <label>At once (workers, max 10) <input type="number" name="workers" value="4" min="1" max="10"></label>
         <label>Steps per session <input type="number" name="steps" value="25" min="1" max="500"></label>
         <div class="checks" style="grid-column:1/-1">
-          <span style="color:var(--muted)">Personas:</span>
-          <label><input type="checkbox" name="persona" value="impatient" checked> impatient</label>
-          <label><input type="checkbox" name="persona" value="sloppy" checked> sloppy</label>
-          <label><input type="checkbox" name="persona" value="out-of-order" checked> out-of-order</label>
-          <label><input type="checkbox" name="persona" value="completionist" checked> completionist</label>
+          <span style="color:var(--muted)">Adversarial agents:</span>
+          <span class="checks" id="persona-checks"><span class="muted">loading…</span></span>
           <span style="width:16px"></span>
           <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
         </div>
@@ -169,6 +178,33 @@
         <tbody id="auth-states"><tr><td colspan="6" class="muted">No saved logins yet.</td></tr></tbody>
       </table>
       <div class="error" id="logins-error"></div>
+    </section>
+
+    <section class="panel" id="personas-panel">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Adversarial agents</h2>
+        <div class="row">
+          <button id="persona-restore" title="Reset edited built-in agents and bring back deleted ones; your own agents stay">Restore built-ins</button>
+          <button class="primary" id="persona-new">New agent</button>
+        </div>
+      </div>
+      <form class="persona-form" id="persona-form" hidden>
+        <label>Name (lowercase letters, digits and dashes)
+          <input type="text" name="name" required maxlength="32" pattern="[a-z0-9][a-z0-9\-]*" placeholder="checkout-hunter"></label>
+        <label>Instructions: who this agent is and what it hunts for. Sent to Jev at every step.
+          <textarea name="strategy" required maxlength="2000" placeholder="You go straight for the checkout flow. You change quantities after adding to cart, apply and remove discount codes, and hunt for totals that do not add up."></textarea></label>
+        <div>
+          <div class="muted" style="font-size:12px;margin-bottom:6px">Behaviours: extra actions this agent gets besides clicking, plain typing, back and reload</div>
+          <div class="traits" id="persona-traits"></div>
+        </div>
+        <div class="row">
+          <button class="primary">Save agent</button>
+          <button type="button" id="persona-cancel">Cancel</button>
+          <span class="error" id="persona-error"></span>
+        </div>
+      </form>
+      <div class="persona-list" id="persona-list"></div>
+      <div class="error" id="personas-error"></div>
     </section>
 
     <div class="grid" id="grid"><div class="empty" id="empty">No sessions running. Start a run to watch the browsers here.</div></div>
@@ -282,7 +318,7 @@ function tileFor(key) {
 function onMeta(s) {
   const t = tileFor(s.key);
   t.persona.textContent = s.persona;
-  t.persona.style.background = `var(--${s.persona})`;
+  t.persona.style.background = personaColor(s.persona);
   t.run.textContent = `${s.runId.slice(0, 8)} · ${s.sessionId.split("-")[0]}`;
   t.step.textContent = s.ended ? `done · ${s.findings} findings` : `step ${s.step}/${s.steps}`;
   t.bar.style.width = `${Math.min(100, (s.step / s.steps) * 100)}%`;
@@ -335,6 +371,83 @@ function connect() {
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// --- Adversarial agents (personas) ------------------------------------------------------------------
+
+const BUILT_IN_COLORS = {
+  impatient: "#f0883e", sloppy: "#db61a2", "out-of-order": "#a371f7", completionist: "#3fb9a8",
+  boundary: "#e3b341", "url-tamperer": "#ff7b72", keyboard: "#79c0ff",
+};
+function personaColor(name) {
+  if (BUILT_IN_COLORS[name]) return BUILT_IN_COLORS[name];
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h} 65% 68%)`;
+}
+
+let personaLib = { personas: [], traits: {}, builtIn: [] };
+let editing = null; // name of the agent being edited, or "" for a new one
+
+async function refreshPersonas() {
+  personaLib = await api("/personas");
+  const { personas, traits, builtIn } = personaLib;
+  $("persona-list").innerHTML = personas.map((p) => `
+    <div class="persona-card">
+      <div class="row">
+        <span class="persona" style="background:${personaColor(p.name)}">${esc(p.name)}</span>
+        <span class="row" style="gap:6px">
+          ${builtIn.includes(p.name) ? `<span class="tag-builtin">built-in</span>` : ""}
+          <button class="small" data-edit-persona="${esc(p.name)}">edit</button>
+          <button class="small" data-delete-persona="${esc(p.name)}">delete</button>
+        </span>
+      </div>
+      <p title="${esc(p.strategy)}">${esc(p.strategy)}</p>
+      <div class="chips">${p.traits.length ? p.traits.map((t) => `<span class="chip" title="${esc(traits[t] ?? "")}">${esc(t)}</span>`).join("") : `<span class="chip">clicks and plain input only</span>`}</div>
+    </div>`).join("");
+  // Keep the run form's choices, defaulting new agents to checked.
+  const box = $("persona-checks");
+  const was = new Map([...box.querySelectorAll("input")].map((i) => [i.value, i.checked]));
+  box.innerHTML = personas.map((p) =>
+    `<label><input type="checkbox" name="persona" value="${esc(p.name)}" ${was.get(p.name) ?? true ? "checked" : ""}> ${esc(p.name)}</label>`).join("");
+}
+
+function openPersonaForm(persona) {
+  editing = persona ? persona.name : "";
+  const form = $("persona-form");
+  // form.name would be the form's own name property, not the field.
+  const field = (n) => form.elements.namedItem(n);
+  field("name").value = persona?.name ?? "";
+  field("strategy").value = persona?.strategy ?? "";
+  $("persona-traits").innerHTML = Object.entries(personaLib.traits).map(([t, desc]) =>
+    `<label><input type="checkbox" name="trait" value="${esc(t)}" ${persona?.traits.includes(t) ? "checked" : ""}>` +
+    `<span>${esc(t)}<small>${esc(desc)}</small></span></label>`).join("");
+  $("persona-error").textContent = "";
+  form.hidden = false;
+  field("name").focus();
+}
+
+$("persona-new").addEventListener("click", () => openPersonaForm(null));
+$("persona-cancel").addEventListener("click", () => { $("persona-form").hidden = true; editing = null; });
+$("persona-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = { name: f.get("name").trim(), strategy: f.get("strategy").trim(), traits: f.getAll("trait") };
+  try {
+    if (editing) await api(`/personas/${encodeURIComponent(editing)}`, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/personas", { method: "POST", body: JSON.stringify(body) });
+    // A renamed agent keeps its place in the run form.
+    const box = $("persona-checks").querySelector(`input[value="${CSS.escape(editing ?? "")}"]`);
+    if (box) box.value = body.name;
+    e.target.hidden = true;
+    editing = null;
+    refreshPersonas();
+  } catch (err) { $("persona-error").textContent = err.message; }
+});
+$("persona-restore").addEventListener("click", async () => {
+  if (!confirm("Reset the built-in agents to their shipped instructions and bring back deleted ones? Your own agents stay.")) return;
+  try { await api("/personas/restore-built-ins", { method: "POST" }); refreshPersonas(); }
+  catch (err) { $("personas-error").textContent = err.message; }
+});
 
 // --- Saved logins ---------------------------------------------------------------------------------
 
@@ -457,6 +570,16 @@ async function refreshRuns() {
 }
 
 document.addEventListener("click", async (e) => {
+  const editName = e.target.dataset?.editPersona;
+  if (editName) { openPersonaForm(personaLib.personas.find((p) => p.name === editName)); return; }
+  const deleteName = e.target.dataset?.deletePersona;
+  if (deleteName) {
+    if (!confirm(`Delete the agent "${deleteName}"? Queued runs keep the version they were submitted with.`)) return;
+    $("personas-error").textContent = "";
+    try { await api(`/personas/${encodeURIComponent(deleteName)}`, { method: "DELETE" }); refreshPersonas(); }
+    catch (err) { $("personas-error").textContent = err.message; }
+    return;
+  }
   const loginName = e.target.dataset?.deleteLogin;
   if (loginName && confirm(`Delete the saved login "${loginName}"?`)) {
     await api(`/auth-states/${encodeURIComponent(loginName)}`, { method: "DELETE" });
@@ -475,6 +598,7 @@ document.addEventListener("click", async (e) => {
   connect();
   refreshRuns();
   refreshLogins();
+  refreshPersonas();
   setInterval(refreshRuns, 3000);
 })();
 </script>

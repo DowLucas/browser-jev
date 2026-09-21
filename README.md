@@ -41,6 +41,26 @@ Each run writes to `out/run-<timestamp>/`:
 
 The exit code is 1 if any non-baselined finding fails, so the run can gate CI.
 
+## Adversarial agents (personas)
+
+Each session runs as one agent. An agent has **instructions**, which are sent to Jev at every step and steer which action it picks. It also has **behaviours** (`traits`), which decide in code which actions exist to pick from. Sessions go round-robin over the chosen agents.
+
+| Agent | Behaviours | Hunts for |
+|---|---|---|
+| `impatient` | `double-submit`, `hasty` | duplicate submissions, races |
+| `sloppy` | `adversarial-input` | validation gaps, encoding bugs, injection |
+| `out-of-order` | `history` | broken multi-step state machines |
+| `completionist` | none | empty states and rarely visited pages |
+| `boundary` | `boundary-input` | off-by-one errors, overflow, rounding, accepted-but-invalid values |
+| `url-tamperer` | `url-tamper` | crashes and raw errors on edited ids and query values, records it should not reach |
+| `keyboard` | `keyboard` | mouse-only controls, forms that ignore Enter, dialogs Escape cannot close |
+
+A 4xx on a URL the tamperer edited is the app correctly refusing it, so it is not reported. A 5xx, a crash or a stack trace still is.
+
+**Your own agents:** in the runner UI, under *Adversarial agents*, add, edit or delete agents, or restore the built-ins. The library is stored in `<data>/personas.json`. A queued run keeps the agent definitions it was submitted with. On the CLI, define them inline in the config file's `personas` list (see `explorer.config.example.json`); `--persona <name>` then picks them by name.
+
+**At most 10 sessions run at once**: `workers` per run, and `RUNNER_CONTEXTS` across the whole runner.
+
 ## Modes: what may reach the server
 
 The tester always clicks, types and submits. The mode decides which of the resulting requests reach the server:
@@ -69,7 +89,7 @@ Saved logins are stored owner-only in `<data>/auth/`. The API and UI show only w
 
 ## Runner service (queue + HTTP API)
 
-`src/runner/server.ts` runs exploration jobs from a queue on one shared browser. A global cap on open browser contexts (`RUNNER_CONTEXTS`) is the memory limit. Free slots rotate between active runs, so a big run can't starve a small one. Jobs are files on disk: a restart re-queues whatever was running, and `SIGTERM` lets runs finish their current step and keep their reports.
+`src/runner/server.ts` runs exploration jobs from a queue on one shared browser. A global cap on open browser contexts (`RUNNER_CONTEXTS`, default and maximum 10) is the memory limit. Free slots rotate between active runs, so a big run can't starve a small one. Jobs are files on disk: a restart re-queues whatever was running, and `SIGTERM` lets runs finish their current step and keep their reports.
 
 ```sh
 RUNNER_TOKEN=$(openssl rand -hex 32) TYPESAFE_API_KEY=... npm run runner
@@ -86,6 +106,9 @@ curl -X POST localhost:8080/runs -H "Authorization: Bearer $RUNNER_TOKEN" -H 'co
 | `GET /runs/:id/log` | Live progress log |
 | `GET /runs/:id/report`, `/report.json` | Findings |
 | `POST /runs/:id/cancel` | Cancel a queued run, or stop a running one (it keeps its report) |
+| `GET /personas` | The agent library, the behaviours they can use, and which agents are built-in |
+| `POST /personas`, `PUT /personas/:name`, `DELETE /personas/:name` | Add, edit (or rename), delete an agent: `{"name","strategy","traits":[]}` |
+| `POST /personas/restore-built-ins` | Reset edited built-ins and bring back deleted ones; your own agents stay |
 
 `authState` names a session saved with `npm run auth:save` and copied to `<data>/auth/<name>.json`. The runner refuses private, loopback and single-label targets, and any domain in `RUNNER_BLOCKED_SUFFIXES`, so it can't be pointed at its neighbours.
 
@@ -109,7 +132,7 @@ npm run explore -- --config explorer.config.json --baseline baseline.json
 | ARIA snapshot, URL, title, history, console errors and failed requests as state | `src/session.ts`, `src/page-model.ts` |
 | Free oracle: console errors, uncaught exceptions, 4xx/5xx, crash, blank render, executed injections | `src/signals.ts` |
 | One call, all questions | `src/judge.ts` |
-| Personas shape the action set (double-clicks, adversarial input, direct URL entry, unvisited-page hints) and the choice prompt | `src/personas.ts`, `src/actions.ts` |
+| Personas shape the action set through their traits (double-clicks, adversarial and boundary input, direct and edited URLs, keyboard keys) and the choice prompt through their instructions | `src/personas.ts`, `src/actions.ts` |
 | Warning band: fail only on high confidence **and** high severity | `classifyJudgment` in `src/judge.ts` |
 | Fingerprint: category + normalized path (ids and UUIDs collapsed) + trigger. Every way of just arriving at a page counts as one trigger | `src/findings.ts`, `triggerKey` in `src/actions.ts` |
 | Safety: allowlist (start URL host + explicit extras), refuse production-looking hosts, block all off-allowlist requests, skip forbidden controls by name and href | `src/safety.ts`, `src/config.ts` |

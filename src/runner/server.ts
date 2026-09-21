@@ -5,7 +5,7 @@
 //   RUNNER_TOKEN          required; clients send "Authorization: Bearer <token>"
 //   RUNNER_PORT           default 8080
 //   RUNNER_DATA           default ./runner-data (jobs, run outputs, saved login sessions in auth/)
-//   RUNNER_CONTEXTS       default 6; browser contexts open at once across all runs
+//   RUNNER_CONTEXTS       default and maximum 10; browser contexts (sessions) open at once across all runs
 //   RUNNER_ACTIVE_RUNS    default 2; runs executing at once (the rest wait in the queue)
 //   RUNNER_WATCH          "1" launches a headed browser (for Xvfb + noVNC)
 //   NTFY_URL              optional; e.g. https://ntfy.example.com/jev, notified when a run ends
@@ -18,7 +18,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { type Browser, chromium } from "playwright";
+import { MAX_PARALLEL_SESSIONS } from "../config.ts";
 import { LiveHub } from "../live.ts";
+import { BUILT_IN_NAMES, TRAITS } from "../personas.ts";
 import { executeRun } from "../run.ts";
 import type { RunLog } from "../session.ts";
 import { FairSlots } from "../slots.ts";
@@ -127,7 +129,7 @@ export class Runner {
       };
       const log: RunLog = { info: (t) => line("info", t), warn: (t) => line("warn", t) };
       try {
-        const cfg = this.store.toConfig(job.request);
+        const cfg = this.store.toConfig(job.request, job.personas ?? (await this.store.listPersonas()));
         const outcome = await executeRun(cfg, {
           browser: await this.#getBrowser(),
           slots: this.slots,
@@ -256,6 +258,21 @@ export function createHandler(runner: Runner) {
         return send(404, { error: "not found" });
       }
 
+      // Persona library: the adversarial agents a run can pick from.
+      if (parts[0] === "personas") {
+        const name = parts[1] && decodeURIComponent(parts[1]);
+        if (!name && req.method === "GET") {
+          return send(200, { personas: await runner.store.listPersonas(), traits: TRAITS, builtIn: BUILT_IN_NAMES });
+        }
+        if (!name && req.method === "POST") return send(201, await runner.store.savePersona(await readJson(req)));
+        if (name === "restore-built-ins" && !parts[2] && req.method === "POST") return send(200, await runner.store.restoreBuiltInPersonas());
+        if (name && req.method === "PUT") return send(200, await runner.store.savePersona(await readJson(req), name));
+        if (name && req.method === "DELETE") {
+          return (await runner.store.deletePersona(name)) ? send(200, { deleted: name }) : send(404, { error: "no such persona" });
+        }
+        return send(404, { error: "not found" });
+      }
+
       if (parts[0] !== "runs") return send(404, { error: "not found" });
       if (parts.length === 1 && req.method === "POST") return send(201, await runner.submit(await readJson(req)));
       if (parts.length === 1 && req.method === "GET") return send(200, (await runner.store.list()).reverse().slice(0, 100));
@@ -310,7 +327,7 @@ async function main() {
   const runner = new Runner({
     token,
     dataDir: process.env.RUNNER_DATA ?? "runner-data",
-    contexts: Number(process.env.RUNNER_CONTEXTS ?? 6),
+    contexts: Math.min(Number(process.env.RUNNER_CONTEXTS ?? MAX_PARALLEL_SESSIONS), MAX_PARALLEL_SESSIONS),
     activeRuns: Number(process.env.RUNNER_ACTIVE_RUNS ?? 2),
     watch: process.env.RUNNER_WATCH === "1",
     ntfyUrl: process.env.NTFY_URL || undefined,

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { candidateActions, explainActionFailure, triggerKey } from "../src/actions.ts";
-import { type Config, DEFAULTS, resolveConfig } from "../src/config.ts";
+import { candidateActions, explainActionFailure, tamperedUrls, triggerKey } from "../src/actions.ts";
+import { type Config, DEFAULTS, MAX_PARALLEL_SESSIONS, resolveConfig } from "../src/config.ts";
+import { BUILT_IN_PERSONAS, resolvePersonas, validatePersona } from "../src/personas.ts";
 import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
@@ -16,6 +17,8 @@ const cfg = (over: Partial<Config>): Config => ({
   allowedHosts: ["127.0.0.1"],
   ...over,
 });
+
+const persona = (name: string) => BUILT_IN_PERSONAS.find((p) => p.name === name)!;
 
 describe("safety", () => {
   it("refuses a start host outside the allowlist", () => {
@@ -122,21 +125,21 @@ describe("candidate actions", () => {
   };
 
   it("skips forbidden controls by name and by href", () => {
-    const { actions, skipped } = candidateActions({ ...base, persona: "completionist" });
+    const { actions, skipped } = candidateActions({ ...base, persona: persona("completionist") });
     assert.equal(skipped, 2);
     assert.ok(!actions.some((a) => a.target === "e1" || a.target === "e2"));
   });
 
   it("gives the sloppy persona adversarial inputs and the impatient persona double clicks on submits only", () => {
-    const sloppy = candidateActions({ ...base, persona: "sloppy" }).actions.filter((a) => a.kind === "fill");
+    const sloppy = candidateActions({ ...base, persona: persona("sloppy") }).actions.filter((a) => a.kind === "fill");
     assert.ok(sloppy.length > 1);
-    const impatient = candidateActions({ ...base, persona: "impatient" }).actions;
+    const impatient = candidateActions({ ...base, persona: persona("impatient") }).actions;
     assert.ok(impatient.some((a) => a.kind === "dblclick" && a.name === "Save"));
     assert.ok(!impatient.some((a) => a.kind !== "click" && a.name === "Show details"));
   });
 
   it("leaves out links to the current page and covered controls, and marks in-page anchors", () => {
-    const { actions } = candidateActions({ ...base, persona: "completionist" });
+    const { actions } = candidateActions({ ...base, persona: persona("completionist") });
     const names = actions.map((a) => a.name);
     assert.ok(!names.includes("Home"), "self-link");
     assert.ok(!names.includes("Privacy"), "covered");
@@ -145,15 +148,91 @@ describe("candidate actions", () => {
   });
 
   it("offers browser forward only when there is somewhere to go forward to", () => {
-    const kinds = (canGoForward: boolean) => candidateActions({ ...base, persona: "out-of-order", canGoForward }).actions.map((a) => a.kind);
+    const kinds = (canGoForward: boolean) => candidateActions({ ...base, persona: persona("out-of-order"), canGoForward }).actions.map((a) => a.kind);
     assert.ok(!kinds(false).includes("forward"));
     assert.ok(kinds(true).includes("forward"));
   });
 
+  it("gives the boundary persona edge values and plain personas only a plausible value", () => {
+    const fills = (name: string) => candidateActions({ ...base, persona: persona(name) }).actions.filter((a) => a.kind === "fill");
+    assert.deepEqual(fills("completionist").map((a) => a.valueLabel), ["plausible"]);
+    const edges = fills("boundary").map((a) => a.valueLabel);
+    assert.ok(edges.length > 1 && edges.includes("plausible"));
+    const numberField = candidateActions({ ...base, elements: [{ id: "n", role: "textbox", name: "Qty", inputType: "number" }], persona: persona("boundary") });
+    for (const a of numberField.actions.filter((x) => x.kind === "fill")) assert.match(a.value!, /^-?[\d.]+$/, "number fields only get numbers");
+  });
+
+  it("gives the keyboard persona Enter on fields, buttons and links and a targetless Escape", () => {
+    const { actions } = candidateActions({ ...base, persona: persona("keyboard") });
+    const presses = actions.filter((a) => a.kind === "press");
+    assert.ok(presses.some((a) => a.key === "Enter" && a.name === "Name"));
+    assert.ok(presses.some((a) => a.key === "Enter" && a.name === "Save"));
+    assert.ok(presses.some((a) => a.key === "Enter" && a.name === "Products"));
+    assert.ok(presses.some((a) => a.key === "Escape" && !a.target));
+    assert.ok(!candidateActions({ ...base, persona: persona("sloppy") }).actions.some((a) => a.kind === "press"));
+  });
+
+  it("gives the url-tamperer edited URLs of the current page, inside the app only", () => {
+    const { actions } = candidateActions({ ...base, currentUrl: "http://127.0.0.1/orders/7?page=2", persona: persona("url-tamperer") });
+    const edits = actions.filter((a) => a.tamper);
+    assert.ok(edits.length > 0 && edits.length <= 4);
+    for (const a of edits) assert.ok(a.url!.startsWith("http://127.0.0.1/") && a.url !== "http://127.0.0.1/orders/7?page=2");
+  });
+
   it("caps the action count while keeping navigation actions", () => {
-    const { actions } = candidateActions({ ...base, persona: "sloppy", maxActions: 4 });
+    const { actions } = candidateActions({ ...base, persona: persona("sloppy"), maxActions: 4 });
     assert.equal(actions.length, 4);
     assert.ok(actions.some((a) => a.kind === "back"));
+  });
+});
+
+describe("url tampering", () => {
+  it("moves ids to neighbours, zero and huge values, edits query values and offers the parent path", () => {
+    const urls = tamperedUrls("http://h/orders/7/items?page=2&sort=name#top").map((t) => t.url);
+    for (const u of ["http://h/orders/8/items?page=2&sort=name", "http://h/orders/6/items?page=2&sort=name", "http://h/orders/0/items?page=2&sort=name", "http://h/orders/999999999/items?page=2&sort=name", "http://h/orders/7?page=2&sort=name", "http://h/orders/7/items?page=-1&sort=name", "http://h/orders/7/items?page=2&sort="]) {
+      assert.ok(urls.includes(u), u);
+    }
+    assert.ok(!urls.some((u) => u.includes("#")), "the fragment is dropped");
+  });
+
+  it("zeroes UUIDs, keeps precision on long ids, and has nothing to edit on a bare root", () => {
+    const uuid = tamperedUrls("http://h/u/3f2b8c1e-1d2a-4b3c-9d8e-7f6a5b4c3d2e").map((t) => t.url);
+    assert.ok(uuid.includes("http://h/u/00000000-0000-0000-0000-000000000000"));
+    assert.ok(tamperedUrls("http://h/p/9007199254740993").some((t) => t.url === "http://h/p/9007199254740994"));
+    assert.deepEqual(tamperedUrls("http://h/"), []);
+  });
+
+  it("counts an edited URL and Enter on a link as arriving, like any other navigation", () => {
+    assert.equal(triggerKey({ kind: "goto", url: "http://h/orders/8", tamper: "id 7 -> 8" }), "navigate");
+    assert.equal(triggerKey({ kind: "press", key: "Enter", role: "link", name: "Orders", target: "e1" }), "navigate");
+    assert.notEqual(triggerKey({ kind: "press", key: "Enter", role: "button", name: "Save", target: "e2" }), "navigate");
+  });
+});
+
+describe("personas", () => {
+  it("resolves built-in names and inline definitions, and rejects unknown names, duplicates and bad fields", () => {
+    const custom = { name: "checkout-hunter", strategy: "Go to checkout.", traits: ["history" as const] };
+    assert.deepEqual(resolvePersonas(["sloppy", custom]).map((p) => p.name), ["sloppy", "checkout-hunter"]);
+    assert.throws(() => resolvePersonas(["slopy"]), /Unknown persona "slopy"/);
+    assert.throws(() => resolvePersonas(["sloppy", "sloppy"]), /listed twice/);
+    assert.throws(() => validatePersona({ ...custom, traits: ["telepathy"] }), /traits must be/);
+    assert.throws(() => validatePersona({ ...custom, name: "Has Spaces" }), /lowercase/);
+    assert.throws(() => validatePersona({ ...custom, strategy: "  " }), /instructions/);
+    assert.throws(() => validatePersona({ ...custom, color: "red" }), /Unknown persona field/);
+  });
+
+  it("gives every built-in a distinct name and a trait set the code knows", () => {
+    const names = BUILT_IN_PERSONAS.map((p) => p.name);
+    assert.equal(new Set(names).size, names.length);
+    for (const p of BUILT_IN_PERSONAS) assert.deepEqual(validatePersona(p), p);
+  });
+
+  it("resolves names in a config layer and caps sessions open at once", () => {
+    const c = resolveConfig({ startUrl: "http://127.0.0.1/", personas: ["keyboard"] });
+    assert.deepEqual(c.personas.map((p) => p.traits), [["keyboard"]]);
+    assert.equal(resolveConfig({ startUrl: "http://127.0.0.1/", workers: MAX_PARALLEL_SESSIONS }).workers, MAX_PARALLEL_SESSIONS);
+    assert.throws(() => resolveConfig({ startUrl: "http://127.0.0.1/", workers: MAX_PARALLEL_SESSIONS + 1 }), /at most 10/);
+    assert.throws(() => resolveConfig({ startUrl: "http://127.0.0.1/", personas: [] }), /At least one persona/);
   });
 });
 

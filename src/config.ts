@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { PERSONA_NAMES, type PersonaName } from "./personas.ts";
+import { BUILT_IN_NAMES, BUILT_IN_PERSONAS, type Persona, resolvePersonas } from "./personas.ts";
 import { type Mode, MODES } from "./safety.ts";
 import type { FreeCategory } from "./signals.ts";
 
@@ -35,7 +35,8 @@ export interface Config {
   sessions: number;
   workers: number;
   steps: number;
-  personas: PersonaName[];
+  /** Resolved definitions; config layers may give built-in names or inline definitions. */
+  personas: Persona[];
   /** false = free oracle only with a random explorer (build step 1). */
   useModel: boolean;
   thresholds: Thresholds;
@@ -65,6 +66,12 @@ export interface Config {
   watch: boolean;
   slowMoMs: number;
 }
+
+/**
+ * Most sessions open at once, per run and across the runner. Each is a browser context doing full
+ * page loads, and every step is a model call; past this, memory and rate limits go before coverage gains.
+ */
+export const MAX_PARALLEL_SESSIONS = 10;
 
 export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   productionPatterns: ["^www\\.", "(^|[.-])prod(uction)?([.-]|$)", "(^|[.-])live([.-]|$)"],
@@ -96,7 +103,7 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   sessions: 4,
   workers: 2,
   steps: 25,
-  personas: [...PERSONA_NAMES],
+  personas: [...BUILT_IN_PERSONAS],
   useModel: true,
   thresholds: { warnConfidence: 0.6, warnSeverity: 1, strongConfidence: 0.75, failConfidence: 0.9, failSeverity: 3 },
   freeOracleFailOn: ["page-error", "http-5xx", "crash", "xss-dialog"],
@@ -118,9 +125,10 @@ const USAGE = `Usage: npm run explore -- [options]
   --url <url>              Start URL
   --allow <host>           Extra allowlisted host (repeatable); the start URL's host is always allowed
   --sessions <n>           Total sessions (default ${DEFAULTS.sessions})
-  --workers <n>            Parallel browser contexts (default ${DEFAULTS.workers})
+  --workers <n>            Parallel browser contexts, at most ${MAX_PARALLEL_SESSIONS} (default ${DEFAULTS.workers})
   --steps <n>              Steps per session (default ${DEFAULTS.steps})
-  --persona <name>         Persona to use (repeatable): ${PERSONA_NAMES.join(", ")}
+  --persona <name>         Persona to use (repeatable): ${BUILT_IN_NAMES.join(", ")},
+                           or a name defined under "personas" in the config file
   --no-model               Free oracle only, random exploration, no Jev calls
   --spec <file>            Spec / ticket describing intended behavior
   --storage-state <file>   Playwright storage state for the test account
@@ -170,17 +178,17 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     process.exit(0);
   }
 
-  const file: Partial<Config> = values.config
+  const file: ConfigLayer = values.config
     ? JSON.parse(await readFile(values.config, "utf8"))
     : {};
 
-  const flags: Partial<Config> = dropUndefined({
+  const flags: ConfigLayer = dropUndefined({
     startUrl: values.url,
     allowedHosts: values.allow,
     sessions: toInt(values.sessions, "sessions"),
     workers: toInt(values.workers, "workers"),
     steps: toInt(values.steps, "steps"),
-    personas: values.persona as PersonaName[] | undefined,
+    personas: values.persona,
     useModel: values["no-model"] ? false : undefined,
     specPath: values.spec,
     storageStatePath: values["storage-state"],
@@ -196,20 +204,30 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     confirmDisposable: values["confirm-disposable"],
   });
 
+  // --persona picks by name, including personas the config file defines inline.
+  if (flags.personas && file.personas) {
+    const defined = file.personas.filter((p): p is Persona => typeof p !== "string");
+    flags.personas = flags.personas.map((name) => defined.find((p) => typeof name === "string" && p.name === name) ?? name);
+  }
   return resolveConfig(file, flags);
 }
 
 /** A partial config, where thresholds may also be partial. */
-export type ConfigLayer = Partial<Omit<Config, "thresholds">> & { thresholds?: Partial<Thresholds> };
+export type ConfigLayer = Partial<Omit<Config, "thresholds" | "personas">> & {
+  thresholds?: Partial<Thresholds>;
+  /** Built-in names, or full definitions. */
+  personas?: (string | Persona)[];
+};
 
 /** Defaults, then each layer in order (later wins), validated. Shared by the CLI and the runner. */
 export function resolveConfig(...layers: ConfigLayer[]): Config {
   const merged: ConfigLayer = Object.assign({}, DEFAULTS, ...layers);
   merged.thresholds = Object.assign({}, DEFAULTS.thresholds, ...layers.map((l) => l.thresholds));
-  return validate(merged as Partial<Config>);
+  return validate(merged);
 }
 
-function validate(cfg: Partial<Config>): Config {
+function validate(layer: ConfigLayer): Config {
+  const cfg = layer as Partial<Config>;
   if (!cfg.startUrl) throw new Error(`Missing start URL (--url).\n\n${USAGE}`);
   let startHost: string;
   try {
@@ -219,11 +237,13 @@ function validate(cfg: Partial<Config>): Config {
   }
   // The start URL's host is always allowed; extra hosts (an API or CDN domain) are added to it.
   cfg.allowedHosts = [...new Set([startHost, ...(cfg.allowedHosts ?? [])])];
-  for (const p of cfg.personas ?? []) {
-    if (!PERSONA_NAMES.includes(p)) throw new Error(`Unknown persona "${p}"`);
-  }
+  if (!Array.isArray(layer.personas) || !layer.personas.length) throw new Error("At least one persona is needed");
+  cfg.personas = resolvePersonas(layer.personas);
   for (const key of ["sessions", "workers", "steps"] as const) {
     if (!(Number(cfg[key]) >= 1)) throw new Error(`${key} must be >= 1`);
+  }
+  if (Number(cfg.workers) > MAX_PARALLEL_SESSIONS) {
+    throw new Error(`workers must be at most ${MAX_PARALLEL_SESSIONS} (sessions open at once)`);
   }
   assertModeAllowed(cfg);
   return cfg as Config;
