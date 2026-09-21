@@ -218,13 +218,15 @@ describe("runner service", () => {
       if (line.startsWith("#")) assert.match(line, /^# (HELP|TYPE) jev_runner_\w+ /);
       else assert.match(line, /^jev_runner_\w+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[\d.e+]+$/, line);
     }
-    const value = (series: string) => Number(text.match(new RegExp(`^${series.replace(/[{}"]/g, "\\$&")} (\\S+)$`, "m"))?.[1]);
+    const value = (series: string) => Number(text.match(new RegExp(`^${series.replace(/[{}"+]/g, "\\$&")} (\\S+)$`, "m"))?.[1]);
     assert.equal(value("jev_runner_slots_capacity"), 2);
     assert.equal(value("jev_runner_jobs{status=\"queued\"}"), 0);
     // Earlier tests in this suite ran and cancelled runs against the demo app.
     assert.ok(value("jev_runner_runs_finished_total{status=\"done\"}") >= 1, text);
     assert.ok(value("jev_runner_sessions_total") >= 1);
     assert.ok(value("jev_runner_run_duration_seconds_count") >= 1);
+    assert.equal(value("jev_runner_run_duration_seconds_bucket{le=\"+Inf\"}"), value("jev_runner_run_duration_seconds_count"));
+    assert.doesNotMatch(text, /^jev_runner_run_duration_seconds\{/m, "histogram buckets carry the _bucket suffix");
     assert.match(text, /^jev_runner_findings_total\{level="(warn|fail)",category="[a-z0-9-]+"\} \d+$/m);
     assert.doesNotMatch(text, /127\.0\.0\.1|http:/, "no target URLs in metrics");
   });

@@ -68,7 +68,7 @@ export class RunnerMetrics {
 
   render(g: RunnerGauges): string {
     const lines: string[] = [];
-    const metric = (name: string, type: "gauge" | "counter" | "histogram", help: string, samples: [string, number][]) => {
+    const metric = (name: string, type: "gauge" | "counter", help: string, samples: [string, number][]) => {
       lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`);
       for (const [labels, value] of samples) lines.push(`${name}${labels} ${value}`);
     };
@@ -110,11 +110,14 @@ export class RunnerMetrics {
     metric("jev_runner_last_run_finished_timestamp_seconds", "gauge", "When the last run finished (0: none since start).", [
       ["", Math.round(this.#lastFinished)],
     ]);
-    metric("jev_runner_run_duration_seconds", "histogram", "Wall time of finished runs.", [
-      ...DURATION_BUCKETS.map((b, i): [string, number] => [label({ le: String(b) }), this.#durationBuckets[i]!]),
-      [label({ le: "+Inf" }), this.#durationCount],
-    ]);
-    lines.push(`jev_runner_run_duration_seconds_sum ${this.#durationSum}`, `jev_runner_run_duration_seconds_count ${this.#durationCount}`);
+    // A histogram's samples are <name>_bucket{le}, <name>_sum and <name>_count under one TYPE line.
+    lines.push("# HELP jev_runner_run_duration_seconds Wall time of finished runs.", "# TYPE jev_runner_run_duration_seconds histogram");
+    DURATION_BUCKETS.forEach((b, i) => lines.push(`jev_runner_run_duration_seconds_bucket${label({ le: String(b) })} ${this.#durationBuckets[i]}`));
+    lines.push(
+      `jev_runner_run_duration_seconds_bucket${label({ le: "+Inf" })} ${this.#durationCount}`,
+      `jev_runner_run_duration_seconds_sum ${this.#durationSum}`,
+      `jev_runner_run_duration_seconds_count ${this.#durationCount}`,
+    );
     return `${lines.join("\n")}\n`;
   }
 }
