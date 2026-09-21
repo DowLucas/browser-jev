@@ -4,23 +4,26 @@ import { normalizeRequestPath } from "./findings.ts";
 /** Marker embedded in injection-shaped input; a dialog carrying it means script injection executed. */
 export const XSS_MARKER = "jev-xss";
 
-export type FreeCategory =
-  | "console-error"
-  | "page-error"
-  | "http-4xx"
-  | "http-5xx"
-  | "crash"
-  | "blank-render"
-  | "xss-dialog"
-  | "click-intercepted"
-  | "service-unavailable"
-  | "covered-control"
-  | "clipped-text"
-  | "horizontal-overflow"
-  | "broken-anchor"
-  | "fence-side-effect"
-  | "setup-failed"
-  | "slow-response";
+/** Categories found by code, without the model. A list, so metrics can start every one at zero. */
+export const FREE_CATEGORIES = [
+  "console-error",
+  "page-error",
+  "http-4xx",
+  "http-5xx",
+  "crash",
+  "blank-render",
+  "xss-dialog",
+  "click-intercepted",
+  "service-unavailable",
+  "covered-control",
+  "clipped-text",
+  "horizontal-overflow",
+  "broken-anchor",
+  "fence-side-effect",
+  "setup-failed",
+  "slow-response",
+] as const;
+export type FreeCategory = (typeof FREE_CATEGORIES)[number];
 
 export interface HttpError {
   method: string;

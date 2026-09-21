@@ -10,7 +10,7 @@ import type { Persona } from "./personas.ts";
  * untranslated key?") scores 0.98 on the bug and 0.02 on a healthy page, while the same example
  * tucked into a broad question scored 0.30. Questions are nearly free, so split rather than stuff.
  */
-const ORACLE_CATEGORIES = {
+export const ORACLE_CATEGORIES = {
   broken: "broken",
   count_mismatch: "count-mismatch",
   untranslated: "untranslated-text",

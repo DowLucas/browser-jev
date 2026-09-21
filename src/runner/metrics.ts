@@ -1,6 +1,17 @@
 import type { FindingGroup } from "../findings.ts";
+import { ORACLE_CATEGORIES } from "../judge.ts";
 import type { RunOutcome } from "../run.ts";
+import { FREE_CATEGORIES } from "../signals.ts";
 import type { JobStatus } from "./jobs.ts";
+
+/**
+ * Every known label set starts at 0. increase() and rate() treat a series' first sample as its
+ * baseline, so a counter that first appears already at 1 (the first failed run after a restart)
+ * would never be counted; runs are rare enough for that to matter.
+ */
+const RUN_STATUSES = ["done", "failed", "cancelled", "interrupted"] as const;
+const LEVELS = ["fail", "warn"] as const;
+const CATEGORIES = [...FREE_CATEGORIES, ...Object.values(ORACLE_CATEGORIES)];
 
 /** Run durations in seconds: from a quick check to an overnight sweep. */
 const DURATION_BUCKETS = [30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 14400];
@@ -21,8 +32,8 @@ export interface RunnerGauges {
  * handle. Labels are bounded: run status, finding level and category, never URLs or run ids.
  */
 export class RunnerMetrics {
-  readonly #runs = new Map<string, number>();
-  readonly #findings = new Map<string, number>();
+  readonly #runs = new Map<string, number>(RUN_STATUSES.map((s) => [s, 0]));
+  readonly #findings = new Map<string, number>(LEVELS.flatMap((l) => CATEGORIES.map((c): [string, number] => [`${l}\u0000${c}`, 0])));
   readonly #durationBuckets = DURATION_BUCKETS.map(() => 0);
   #durationSum = 0;
   #durationCount = 0;
