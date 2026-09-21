@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { join, resolve } from "node:path";
-import { type Config, MAX_PARALLEL_SESSIONS, resolveConfig } from "../config.ts";
+import { assertSetupAllowed, type Config, MAX_PARALLEL_SESSIONS, resolveConfig } from "../config.ts";
 import { BUILT_IN_PERSONAS, type Persona, resolvePersonas, validatePersona } from "../personas.ts";
 import type { RunSummary } from "../report.ts";
 import { assertSafeTarget, type Mode, MODES } from "../safety.ts";
@@ -31,6 +31,8 @@ export interface RunRequest {
   extraForbiddenPatterns?: string[];
   /** Where to concentrate: { instructions?, includePaths?, excludePaths? }. The start URL is the entry point. */
   focus?: { instructions?: string; includePaths?: string[]; excludePaths?: string[] };
+  /** Setup script run before each session: one step per line (goto, click, fill, select, press, wait for, back). */
+  setup?: string;
   /** Inline spec / ticket text. */
   spec?: string;
   /** Name of a saved login session in <data>/auth, e.g. "staging" for auth/staging.json. */
@@ -129,6 +131,7 @@ const REQUEST_SCHEMA: Record<keyof RunRequest, { check: Check; expected: string 
       Object.entries(v).every(([k, x]) => (k === "instructions" ? isString(x) : ["includePaths", "excludePaths"].includes(k) && isStringArray(x))),
     expected: "{ instructions?: string, includePaths?: string[], excludePaths?: string[] }",
   },
+  setup: { check: (v) => isString(v) && (v as string).length <= 20_000, expected: "a string of setup steps, one per line" },
   spec: { check: isString, expected: "a string" },
   authState: { check: isString, expected: "a string" },
 };
@@ -202,6 +205,7 @@ export class JobStore {
       cfg = resolveConfig({ ...rest, personas: chosen, storageStatePath: authState && this.authPath(authState) });
       cfg.forbiddenPatterns = [...cfg.forbiddenPatterns, ...extraForbiddenPatterns];
       for (const p of cfg.forbiddenPatterns) new RegExp(p);
+      assertSetupAllowed(cfg);
       assertSafeTarget(cfg);
       for (const host of cfg.allowedHosts) assertPublicTarget(host, this.policy);
     } catch (err) {

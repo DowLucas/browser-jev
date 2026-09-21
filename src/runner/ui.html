@@ -145,7 +145,7 @@
           <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
         </div>
         <fieldset class="modes" style="grid-column:1/-1">
-          <legend>Focus (optional): point the run at one flow or area</legend>
+          <legend>Focus and setup (optional): point the run at one flow or area</legend>
           <label>What to concentrate on. Every agent gets this with its own instructions.
             <textarea name="focusInstructions" maxlength="2000" style="min-height:60px"
               placeholder="The checkout flow: cart, shipping address, delivery options and the order summary. Quantities, discount codes and totals matter most."></textarea></label>
@@ -156,6 +156,13 @@
               <input type="text" name="excludePaths" placeholder="/checkout/pay"></label>
           </div>
           <span class="muted" style="font-size:12px">The start URL is the entry point: it must be inside the paths, and sessions return to it when they leave the area.</span>
+          <label>Setup steps, replayed before each session to reach state first (one per line: goto, click, fill, select, press, wait for, back)
+            <textarea name="setup" spellcheck="false" style="font-family:ui-monospace,monospace;font-size:12px;min-height:80px"
+              placeholder='goto /products/3&#10;click button "Add to cart"&#10;wait for "Added to cart"'></textarea></label>
+          <div class="row" style="align-items:center">
+            <button type="button" id="setup-record">Record steps…</button>
+            <span class="muted" style="font-size:12px">Opens the start URL (signed in with the saved login, if one is picked). What you click and type becomes steps. Recording uses a real browser: what you do there reaches the site.</span>
+          </div>
         </fieldset>
         <fieldset class="modes" style="grid-column:1/-1">
           <legend>Mode: what may reach the server</legend>
@@ -229,10 +236,12 @@
           <div class="browser-url" id="login-current-url">loading…</div>
           <input type="text" id="login-name" placeholder="name, e.g. staging" style="width:170px">
           <button class="primary" id="login-save">Save login</button>
+          <button class="primary" id="record-use" hidden>Use these steps</button>
           <button id="login-cancel">Cancel</button>
         </div>
         <div class="browser-screen" id="login-screen" tabindex="0"><img id="login-img" alt="Remote login browser"></div>
-        <div class="browser-hint">Click the screen, then type as usual. Enter, Tab, Backspace, arrows and paste work; scroll with the mouse wheel. When you are signed in, name the login and save it.</div>
+        <div class="browser-hint" id="login-hint">Click the screen, then type as usual. Enter, Tab, Backspace, arrows and paste work; scroll with the mouse wheel. When you are signed in, name the login and save it.</div>
+        <pre id="record-steps" hidden style="margin:0;padding:8px 10px;border-top:1px solid var(--border);max-height:140px;overflow:auto;font-size:12px;color:var(--text)"></pre>
       </div>
     </div>
 
@@ -298,6 +307,7 @@ $("run-form").addEventListener("submit", async (e) => {
   if (!focus.instructions) delete focus.instructions;
   if (focus.instructions || focus.includePaths.length || focus.excludePaths.length) request.focus = focus;
   if (request.mode === "interact") request.confirmDisposable = f.get("confirmDisposable") === "on";
+  if (f.get("setup").trim()) request.setup = f.get("setup");
   if (f.get("authState").trim()) request.authState = f.get("authState").trim();
   $("run-error").textContent = "";
   try {
@@ -510,20 +520,57 @@ const loginInput = (() => {
   };
 })();
 
+// The same remote browser saves logins and records setup steps.
+async function openRemote(body) {
+  const record = !!body.record;
+  const { id } = await api("/logins", { method: "POST", body: JSON.stringify(body) });
+  login = { id, record, stream: new EventSource(`/logins/${id}/stream`) };
+  login.stream.addEventListener("frame", (e) => { $("login-img").src = `data:image/jpeg;base64,${JSON.parse(e.data).jpeg}`; });
+  login.stream.addEventListener("meta", (e) => { $("login-current-url").textContent = JSON.parse(e.data).url; });
+  login.stream.addEventListener("steps", (e) => {
+    const pre = $("record-steps");
+    pre.textContent = JSON.parse(e.data).lines.join("\n");
+    pre.scrollTop = pre.scrollHeight;
+  });
+  login.stream.addEventListener("closed", () => closeLoginWindow());
+  $("login-name").hidden = $("login-save").hidden = record;
+  $("record-use").hidden = $("record-steps").hidden = !record;
+  $("record-steps").textContent = "";
+  $("login-hint").textContent = record
+    ? "Recording: click and type through the flow as a user would. Each action becomes a setup step below. Passwords are never recorded; sign in with a saved login instead."
+    : "Click the screen, then type as usual. Enter, Tab, Backspace, arrows and paste work; scroll with the mouse wheel. When you are signed in, name the login and save it.";
+  $("login-window").hidden = false;
+  $("login-screen").focus();
+}
+
 $("login-start").addEventListener("click", async () => {
   const url = $("login-url").value.trim();
   $("logins-error").textContent = "";
   if (!url) { $("logins-error").textContent = "Enter the URL of the site's login page first."; return; }
   try {
-    const { id } = await api("/logins", { method: "POST", body: JSON.stringify({ url }) });
-    login = { id, stream: new EventSource(`/logins/${id}/stream`) };
-    login.stream.addEventListener("frame", (e) => { $("login-img").src = `data:image/jpeg;base64,${JSON.parse(e.data).jpeg}`; });
-    login.stream.addEventListener("meta", (e) => { $("login-current-url").textContent = JSON.parse(e.data).url; });
-    login.stream.addEventListener("closed", () => closeLoginWindow());
+    await openRemote({ url });
     $("login-name").value = new URL(url).hostname.split(".")[0];
-    $("login-window").hidden = false;
-    $("login-screen").focus();
   } catch (err) { $("logins-error").textContent = err.message; }
+});
+
+$("setup-record").addEventListener("click", async () => {
+  const f = new FormData($("run-form"));
+  const url = f.get("startUrl").trim();
+  $("run-error").textContent = "";
+  if (!url) { $("run-error").textContent = "Enter the start URL first: recording starts there."; return; }
+  try { await openRemote({ url, record: true, authState: f.get("authState") || undefined }); }
+  catch (err) { $("run-error").textContent = err.message; }
+});
+
+$("record-use").addEventListener("click", async () => {
+  const id = login?.id;
+  if (!id) return;
+  try {
+    const { steps } = await api(`/logins/${id}/steps`);
+    $("run-form").elements.namedItem("setup").value = steps;
+    closeLoginWindow();
+    await api(`/logins/${id}`, { method: "DELETE" }).catch(() => {});
+  } catch (err) { $("login-current-url").textContent = err.message; }
 });
 
 function closeLoginWindow() {

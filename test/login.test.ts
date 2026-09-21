@@ -6,7 +6,9 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { chromium } from "playwright";
 import { createHandler, Runner } from "../src/runner/server.ts";
+import { parseSetup, runSetupStep } from "../src/setup.ts";
 
 const DEMO_PORT = 4196;
 const TOKEN = "test-token-0123456789abcdef";
@@ -97,6 +99,42 @@ describe("saved login sessions", () => {
     const log = await fetch(`${base}/runs/${run.body.id}/log`, { headers: { authorization: `Bearer ${TOKEN}` } }).then((r) => r.text());
     assert.match(log, /\/account/, "the run stayed on the signed-in page instead of being sent to /login");
     assert.doesNotMatch(log, /\/login/);
+  });
+
+  it("records setup steps from clicks and typing, never the password, and the recording replays", async () => {
+    const { status, body: started } = await post("/logins", { url: `http://127.0.0.1:${DEMO_PORT}/login`, record: true });
+    assert.equal(status, 201);
+    const page = runner.logins.pageOf(started.id)!;
+    await page.waitForSelector("input[name=username]");
+    const vp = page.viewportSize()!;
+    const clickOn = async (selector: string) => {
+      const box = (await page.locator(selector).boundingBox())!;
+      await post(`/logins/${started.id}/input`, { type: "click", x: (box.x + box.width / 2) / vp.width, y: (box.y + box.height / 2) / vp.height });
+    };
+    await clickOn("input[name=username]");
+    await post(`/logins/${started.id}/input`, { type: "type", text: "test" });
+    await post(`/logins/${started.id}/input`, { type: "type", text: "er" });
+    await clickOn("input[name=password]");
+    await post(`/logins/${started.id}/input`, { type: "type", text: "hunter2" });
+    await clickOn("button[type=submit]");
+    await page.waitForURL(/\/account$/);
+
+    const { body } = await api(`/logins/${started.id}/steps`);
+    const lines: string[] = body.steps.trim().split("\n");
+    assert.deepEqual(lines.filter((l) => !l.startsWith("#")), ['goto /login', 'fill textbox "Username" with "tester"', 'click button "Sign in"']);
+    assert.ok(lines.some((l) => l.startsWith("# not recorded: the password")), "the password field is noted, not recorded");
+    assert.doesNotMatch(body.steps, /hunter2/);
+    await api(`/logins/${started.id}`, { method: "DELETE" });
+
+    // The recorded steps parse, and replay on a fresh page up to the password the recorder left out.
+    const steps = parseSetup(body.steps);
+    const fresh = await (await chromium.launch()).newPage();
+    try {
+      for (const step of steps.slice(0, 2)) await runSetupStep(fresh, step, `http://127.0.0.1:${DEMO_PORT}/`, 5_000);
+      assert.equal(await fresh.inputValue("input[name=username]"), "tester");
+    } finally {
+      await fresh.context().browser()!.close();
+    }
   });
 
   it("rejects bad input, bad names and non-session uploads; deletes", async () => {

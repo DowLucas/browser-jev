@@ -19,6 +19,7 @@ import { ariaSnapshot, enumerateElements, invalidFields, isBlank, layoutIssues }
 import type { Persona } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
 import { inFocus } from "./focus.ts";
+import { formatStep, runSetupStep } from "./setup.ts";
 import { type LiveSink, startScreencast } from "./live.ts";
 import { Settler } from "./settle.ts";
 import { placeWindow, showNextAction, type WindowBounds } from "./watch.ts";
@@ -132,12 +133,17 @@ export async function runSession(
   });
   /** Requests the fence blocked since the last signal drain; their fallout is not an app bug. */
   let blockedSinceDrain = 0;
+  /** Writes the mode blocked, in order; setup reads the ones its steps caused. */
+  const blockedWriteLog: string[] = [];
   await installNetworkFence(
     context,
     cfg,
     (url, reason) => {
       blockedSinceDrain++;
-      if (reason === "write-blocked") blockedWrites.add(url);
+      if (reason === "write-blocked") {
+        blockedWrites.add(url);
+        blockedWriteLog.push(url);
+      }
       else blocked.add(new URL(url).host);
     },
     (write) => {
@@ -226,8 +232,60 @@ export async function runSession(
       opts,
     );
 
+  /**
+   * Replay the setup steps. Their signals are findings like any other; a step that cannot be done
+   * ends the session, since everything after it would test the wrong state.
+   */
+  const runSetup = async (): Promise<boolean> => {
+    if (cfg.setup[0]?.kind !== "goto") await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
+    const blockedBefore = blockedWriteLog.length;
+    for (const [i, step] of cfg.setup.entries()) {
+      trigger = `setup step ${i + 1}: ${formatStep(step)}`;
+      result.actionLog.push(`${trigger}  [on ${page.url()}]`);
+      live?.step(sessionId, { step: 0, url: new URL(page.url()).pathname, next: trigger, flags: [] });
+      let failure: string | undefined;
+      try {
+        await runSetupStep(page, step, cfg.startUrl, cfg.actionTimeoutMs);
+        await settle();
+      } catch (err) {
+        failure = (err as Error).message.split("\n")[0];
+      }
+      const url = page.url();
+      recordFree(freeOracle(collector.drain(), false), url, 0, blockedSinceDrain);
+      blockedSinceDrain = 0;
+      if (!failure) continue;
+      const blockedInSetup = blockedWriteLog.slice(blockedBefore);
+      const hint = blockedInSetup.length
+        ? `. The ${cfg.mode} mode blocked ${blockedInSetup.slice(0, 3).join(", ")} during setup; if the step depended ` +
+          "on that, allow the path with observe-writes (--allow-write) or run in interact mode"
+        : "";
+      record(
+        {
+          category: "setup-failed",
+          source: "free",
+          level: cfg.freeOracleFailOn.includes("setup-failed") ? "fail" : "warn",
+          message: `Setup step ${i + 1} (${formatStep(step)}) failed, so the session did not explore: ${failure}${hint}`,
+          url,
+          trigger,
+          step: 0,
+        },
+        { shape: String(i + 1), pageIndependent: true, triggerIndependent: true },
+      );
+      log.warn(`[${sessionId}] setup step ${i + 1} failed: ${failure}`);
+      return false;
+    }
+    const blockedInSetup = blockedWriteLog.slice(blockedBefore);
+    if (blockedInSetup.length) {
+      log.warn(`[${sessionId}] setup finished, but ${cfg.mode} mode blocked ${blockedInSetup.slice(0, 3).join(", ")} during it`);
+    }
+    return true;
+  };
+
   try {
-    await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
+    if (cfg.setup.length && !(await runSetup())) return result;
+    // Sessions start at the entry point, wherever setup ended.
+    if (!cfg.setup.length || page.url() !== cfg.startUrl) await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
+    trigger = "start";
 
     for (let step = 0; step < cfg.steps; step++) {
       // Per-step failures are caught below, so a dead page would otherwise be stepped through to the end.

@@ -235,10 +235,13 @@ export function createHandler(runner: Runner) {
       if (parts[0] === "logins") {
         const [, id, sub] = parts;
         if (!id && req.method === "POST") {
-          const { url } = await readJson<{ url?: unknown }>(req);
+          const { url, record, authState } = await readJson<{ url?: unknown; record?: unknown; authState?: unknown }>(req);
           if (typeof url !== "string") throw new RequestError("url is required");
-          return send(201, await runner.logins.start(url));
+          if (record !== undefined && typeof record !== "boolean") throw new RequestError("record must be a boolean");
+          if (authState !== undefined && typeof authState !== "string") throw new RequestError("authState must be a string");
+          return send(201, await runner.logins.start(url, { record, authState: authState || undefined }));
         }
+        if (id && sub === "steps" && req.method === "GET") return send(200, runner.logins.steps(id));
         if (id && sub === "stream" && req.method === "GET") {
           if (!runner.logins.subscribe(id, res)) return send(404, { error: "no such login session" });
           return;

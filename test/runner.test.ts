@@ -84,6 +84,8 @@ describe("runner service", () => {
       [{ ...demoRun, personas: [{ name: "inline", strategy: "x", traits: [] }] }, /personas must be an array of persona names/],
       [{ ...demoRun, focus: { includePaths: ["/products/*"] } }, /start URL \/ is outside the focus paths/],
       [{ ...demoRun, focus: { includePaths: "/products/*" } }, /focus must be/],
+      [{ ...demoRun, setup: 'click button "Checkout"' }, /forbidden-control pattern/],
+      [{ ...demoRun, setup: "teleport /x" }, /Setup line 1 .*unknown step/],
     ];
     for (const [body, error] of cases) {
       const res = await submit(body);
@@ -142,6 +144,34 @@ describe("runner service", () => {
     assert.ok(covered.length > 0);
     for (const page of covered) assert.match(page, /^\/products(\/|$)/, `covered ${page}, outside the focus`);
     assert.match(report.summary.focus, /The product catalogue/);
+  });
+
+  const signIn = 'goto /login\nfill "Username" with "tester"\nfill "Password" with "hunter2"\nclick button "Sign in"\nwait for "Signed in as tester."';
+  const setupRun = (extra: object) =>
+    submit({ ...demoRun, startUrl: `http://127.0.0.1:${DEMO_PORT}/account`, steps: 2, sessions: 1, setup: signIn, focus: { includePaths: ["/account"] }, ...extra });
+
+  it("replays setup before each session, so a focused run starts in the state it needs", async () => {
+    const { status, body: job } = await setupRun({ mode: "observe-writes", allowedWritePaths: ["/login"] });
+    assert.equal(status, 201, JSON.stringify(job));
+    const done = await waitFor(job.id, ["done", "failed"]);
+    assert.equal(done.status, "done", done.error);
+    const { body: report } = await api(`/runs/${job.id}/report.json`);
+    assert.ok(!report.findings.some((g: { category: string }) => g.category === "setup-failed"), JSON.stringify(report.findings));
+    assert.deepEqual(report.summary.pagesCovered, ["/account"], "signed in, so /account did not redirect to /login");
+    const { body: log } = await api(`/runs/${job.id}/log`);
+    assert.match(log, /setup|\/account/);
+  });
+
+  it("fails a setup step with the reason, and points at the write the mode blocked", async () => {
+    const { body: job } = await setupRun({});
+    await waitFor(job.id, ["done", "failed"]);
+    const { body: report } = await api(`/runs/${job.id}/report.json`);
+    const failed = report.findings.find((g: { category: string }) => g.category === "setup-failed");
+    assert.ok(failed, JSON.stringify(report.findings.map((g: { category: string }) => g.category)));
+    assert.equal(failed.level, "fail");
+    assert.match(failed.example.message, /Setup step 5 \(wait for "Signed in as tester\."\) failed/);
+    assert.match(failed.example.message, /blocked POST .*\/login/);
+    assert.deepEqual(report.summary.pagesCovered, [], "a failed setup explores nothing");
   });
 
   it("queues runs beyond the active limit, runs them in order, and cancels a queued one", async () => {

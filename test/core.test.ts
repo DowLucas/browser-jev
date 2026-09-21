@@ -4,6 +4,7 @@ import { candidateActions, explainActionFailure, tamperedUrls, triggerKey } from
 import { type Config, DEFAULTS, MAX_PARALLEL_SESSIONS, resolveConfig } from "../src/config.ts";
 import { BUILT_IN_PERSONAS, resolvePersonas, validatePersona } from "../src/personas.ts";
 import { describeFocus, focusPathMatches, inFocus, NO_FOCUS, validateFocus } from "../src/focus.ts";
+import { formatStep, parseSetup } from "../src/setup.ts";
 import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
@@ -273,6 +274,66 @@ describe("focus", () => {
     const c = resolveConfig({ startUrl: "http://127.0.0.1/cart", focus: { includePaths: ["/cart"] } });
     assert.deepEqual(c.focus, { includePaths: ["/cart"], excludePaths: [] });
     assert.deepEqual(resolveConfig({ startUrl: "http://127.0.0.1/" }).focus, NO_FOCUS);
+  });
+});
+
+describe("setup steps", () => {
+  const script = `
+    # sign in, then fill the cart
+    goto /products/3
+    click button "Add to cart"
+    click "Widget 3" nth 2
+    fill textbox "Coupon" with "SAVE \\"10\\""
+    fill "Email" with "a@b.test"
+    select combobox "Size" option "M"
+    press Enter
+    press Shift+Tab
+    wait for "Added to cart"
+    back
+  `;
+
+  it("parses every kind of step, skipping comments and blank lines", () => {
+    const steps = parseSetup(script);
+    assert.equal(steps.length, 10);
+    assert.deepEqual(steps[0], { kind: "goto", url: "/products/3" });
+    assert.deepEqual(steps[2], { kind: "click", target: { name: "Widget 3", nth: 2 } });
+    assert.deepEqual(steps[3], { kind: "fill", target: { role: "textbox", name: "Coupon" }, value: 'SAVE "10"' });
+    assert.deepEqual(steps[4], { kind: "fill", target: { name: "Email" }, value: "a@b.test" });
+    assert.deepEqual(steps[8], { kind: "wait-for", text: "Added to cart" });
+  });
+
+  it("formats steps back into lines that parse to the same steps", () => {
+    const steps = parseSetup(script);
+    assert.deepEqual(parseSetup(steps.map(formatStep)), steps);
+  });
+
+  it("names the line and the problem when a step does not parse", () => {
+    const bad: [string, RegExp][] = [
+      ['clik button "Save"', /unknown step "clik"/],
+      ['click buton "Save"', /unknown role "buton"/],
+      ['click button "Save', /unclosed quote/],
+      ['click button Save', /unknown role "Save"|expected the button's name/],
+      ['fill textbox "Email" "x"', /expected "with"/],
+      ["press F13", /press needs a key/],
+      ["goto products", /http\(s\) URL or a path/],
+      ['click button "Save" nth 0', /nth needs a whole number/],
+      ['click button "Save" now', /unexpected "now"/],
+      ['click button ""', /name is empty/],
+    ];
+    for (const [line, error] of bad) assert.throws(() => parseSetup(`goto /\n\n${line}`), (err: Error) => {
+      assert.match(err.message, error, line);
+      assert.match(err.message, /^Setup line 3 /, line);
+      return true;
+    });
+    assert.throws(() => parseSetup(Array.from({ length: 51 }, () => "back")), /at most 50/);
+  });
+
+  it("holds setup to the same allowlist and forbidden controls as exploration", () => {
+    const base = { startUrl: "http://127.0.0.1/cart" };
+    assert.equal(resolveConfig({ ...base, setup: 'goto /products/1\nclick button "Add to cart"' }).setup.length, 2);
+    assert.throws(() => resolveConfig({ ...base, setup: "goto https://evil.test/" }), /leaves the allowed hosts/);
+    assert.throws(() => resolveConfig({ ...base, setup: 'click button "Proceed to checkout"' }), /forbidden-control pattern/);
+    assert.throws(() => resolveConfig({ ...base, setup: "goto /account/delete" }), /forbidden-control pattern/);
   });
 });
 

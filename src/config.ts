@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { type Focus, NO_FOCUS, validateFocus } from "./focus.ts";
+import { forbiddenMatcher, isAppUrl } from "./safety.ts";
+import { formatStep, parseSetup, resolveSetupUrl, type SetupStep, stepSubjects } from "./setup.ts";
 import { parseArgs } from "node:util";
 import { BUILT_IN_NAMES, BUILT_IN_PERSONAS, type Persona, resolvePersonas } from "./personas.ts";
 import { type Mode, MODES } from "./safety.ts";
@@ -44,6 +46,8 @@ export interface Config {
   freeOracleFailOn: FreeCategory[];
   /** Where to concentrate: instructions for the model, and paths enforced in code. */
   focus: Focus;
+  /** Steps replayed before each session to reach state exploration alone would not. */
+  setup: SetupStep[];
   /** Path to a spec / ticket / PR description; tells the model what is intended. */
   specPath?: string;
   /** Playwright storage state for a throwaway, pre-authenticated test account. */
@@ -109,8 +113,10 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   personas: [...BUILT_IN_PERSONAS],
   useModel: true,
   focus: NO_FOCUS,
+  setup: [],
   thresholds: { warnConfidence: 0.6, warnSeverity: 1, strongConfidence: 0.75, failConfidence: 0.9, failSeverity: 3 },
-  freeOracleFailOn: ["page-error", "http-5xx", "crash", "xss-dialog"],
+  // A failed setup means the sessions tested nothing they were meant to: that must not pass quietly.
+  freeOracleFailOn: ["page-error", "http-5xx", "crash", "xss-dialog", "setup-failed"],
   outDir: "out",
   maxSnapshotChars: 60_000,
   maxActions: 120,
@@ -138,6 +144,7 @@ const USAGE = `Usage: npm run explore -- [options]
   --focus-path <path>      Stay within this path (repeatable): /cart, or /checkout/* for it and below
   --exclude-path <path>    Never enter this path (repeatable), same syntax
                            The start URL is the entry point: sessions return to it when they leave the area
+  --setup <file>           Setup steps replayed before each session (goto, click, fill, select, press, wait for, back)
   --spec <file>            Spec / ticket describing intended behavior
   --storage-state <file>   Playwright storage state for the test account
   --baseline <file>        Suppress fingerprints listed in this file
@@ -167,6 +174,7 @@ export async function loadConfig(argv: string[]): Promise<Config> {
       persona: { type: "string", multiple: true },
       "no-model": { type: "boolean" },
       focus: { type: "string" },
+      setup: { type: "string" },
       "focus-path": { type: "string", multiple: true },
       "exclude-path": { type: "string", multiple: true },
       spec: { type: "string" },
@@ -202,6 +210,7 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     personas: values.persona,
     useModel: values["no-model"] ? false : undefined,
     specPath: values.spec,
+    setup: values.setup === undefined ? undefined : await readFile(values.setup, "utf8"),
     storageStatePath: values["storage-state"],
     baselinePath: values.baseline,
     writeBaselinePath: values["write-baseline"],
@@ -231,7 +240,9 @@ export async function loadConfig(argv: string[]): Promise<Config> {
 }
 
 /** A partial config, where thresholds may also be partial. */
-export type ConfigLayer = Partial<Omit<Config, "thresholds" | "personas" | "focus">> & {
+export type ConfigLayer = Partial<Omit<Config, "thresholds" | "personas" | "focus" | "setup">> & {
+  /** Setup script text or lines (see setup.ts), or already parsed steps. */
+  setup?: string | string[] | SetupStep[];
   /** Paths may be left out; they default to none. */
   focus?: Partial<Focus>;
   thresholds?: Partial<Thresholds>;
@@ -258,6 +269,7 @@ function validate(layer: ConfigLayer): Config {
   // The start URL's host is always allowed; extra hosts (an API or CDN domain) are added to it.
   cfg.allowedHosts = [...new Set([startHost, ...(cfg.allowedHosts ?? [])])];
   cfg.focus = validateFocus(layer.focus, cfg.startUrl);
+  cfg.setup = toSetupSteps(layer.setup);
   if (!Array.isArray(layer.personas) || !layer.personas.length) throw new Error("At least one persona is needed");
   cfg.personas = resolvePersonas(layer.personas);
   for (const key of ["sessions", "workers", "steps"] as const) {
@@ -267,7 +279,36 @@ function validate(layer: ConfigLayer): Config {
     throw new Error(`workers must be at most ${MAX_PARALLEL_SESSIONS} (sessions open at once)`);
   }
   assertModeAllowed(cfg);
+  assertSetupAllowed(cfg as Config);
   return cfg as Config;
+}
+
+function toSetupSteps(setup: ConfigLayer["setup"]): SetupStep[] {
+  if (setup === undefined) return [];
+  if (typeof setup === "string") return parseSetup(setup);
+  // Parsed steps (e.g. re-resolving a resolved config) round-trip through the text form, which validates them.
+  return parseSetup(setup.map((s) => (typeof s === "string" ? s : formatStep(s))));
+}
+
+/**
+ * Setup gets no exemptions: its steps stay on the allowlisted hosts and never touch a forbidden
+ * control, the same as exploration. Call again after adding forbidden patterns.
+ */
+export function assertSetupAllowed(cfg: Config): void {
+  const forbidden = forbiddenMatcher(cfg.forbiddenPatterns);
+  cfg.setup.forEach((step, i) => {
+    const line = `Setup step ${i + 1} (${formatStep(step)})`;
+    if (step.kind === "goto" && !isAppUrl(resolveSetupUrl(step.url, cfg.startUrl), cfg.allowedHosts)) {
+      throw new Error(`${line} leaves the allowed hosts (${cfg.allowedHosts.join(", ")})`);
+    }
+    const hit = stepSubjects(step).find(forbidden);
+    if (hit !== undefined) {
+      throw new Error(
+        `${line} touches "${hit}", which matches a forbidden-control pattern. The forbidden list applies to ` +
+          "setup too; reach that page with a goto instead, or drop the step.",
+      );
+    }
+  });
 }
 
 function assertModeAllowed(cfg: Partial<Config>): void {

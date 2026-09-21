@@ -78,7 +78,29 @@ npm run explore -- --url https://staging.example.dev/cart --focus "Checkout: qua
   --focus-path /cart --focus-path "/checkout/*" --exclude-path /checkout/pay
 ```
 
-In the runner UI it is the *Focus* section of the *New run* form. In the API it is `"focus": {"instructions", "includePaths", "excludePaths"}`.
+In the runner UI it is the *Focus and setup* section of the *New run* form. In the API it is `"focus": {"instructions", "includePaths", "excludePaths"}`.
+
+### Setup steps: reach the state first
+
+Some flows need state before there is anything to test, for example an item in the cart. Setup steps run before each session. Then the session goes to the start URL and explores from there. There is one step per line. Targets are found by role and accessible name, like the explorer finds them, so restyling does not break them:
+
+```
+goto /products/3
+click button "Add to cart"
+fill textbox "Coupon" with "SAVE10"
+select combobox "Size" option "M"
+press Enter
+wait for "Added to cart"
+back
+```
+
+A target is `<role> "<name>"`, or just `"<text>"` (visible text for `click`, the field's label for `fill` and `select`). Add `nth <k>` when several elements match. `#` starts a comment.
+
+- **Record instead of writing:** *Record steps…* in the run form opens the start URL in a live browser on the runner, signed in with the chosen saved login. What you click and type becomes steps, and you can edit them before starting the run. Passwords are never recorded: sign in with a saved login. Recording uses a real, unfenced browser, so what you do there reaches the site.
+- **Same safety as the run:** setup stays on the allowed hosts, never touches a forbidden control (use `goto` to reach a page behind one), and its requests pass through the mode's fence.
+- **Failures are loud:** a step that cannot be done ends the session with a `setup-failed` finding, which fails the run by default. It names the step and the reason. If the mode blocked a write during setup (an add-to-cart POST in observe mode, say), it names that write too: allow the path with `observe-writes`. End a setup with `wait for "<text>"` so a step that silently did nothing is caught.
+
+CLI: `--setup <file>`. Config file: `"setup"` as text or a list of lines. API: `"setup": "<text>"`.
 
 ## Modes: what may reach the server
 
@@ -157,6 +179,7 @@ npm run explore -- --config explorer.config.json --baseline baseline.json
 | Safety: allowlist (start URL host + explicit extras), refuse production-looking hosts, block all off-allowlist requests, skip forbidden controls by name and href | `src/safety.ts`, `src/config.ts` |
 | One browser, many contexts | `src/cli.ts` |
 | Spec/ticket in the state, so intended changes are not flagged | `--spec <file>` |
+| Setup steps replayed before each session, recorded in the remote browser | `src/setup.ts`, `src/runner/login.ts`, `--setup` |
 | Focus: instructions in the state and the action question; include/exclude paths enforced on candidate actions, with a return to the entry page | `src/focus.ts`, `--focus`, `--focus-path` |
 
 Next actions are sampled from Jev's probability distribution rather than taking the top choice. That way parallel workers with the same persona spread out instead of walking the same path.
