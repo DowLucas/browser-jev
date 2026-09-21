@@ -210,4 +210,22 @@ describe("runner service", () => {
     assert.match(report.body, /# Adversarial exploration report/);
     assert.match((await api(`/runs/${a.id}/log`)).body, /s000-impatient\] done/);
   });
+
+  it("exposes Prometheus metrics for runs, slots, findings and model use", async () => {
+    const text = await runner.metricsText();
+    // Every sample line is valid exposition format: name, optional labels, a number.
+    for (const line of text.trim().split("\n")) {
+      if (line.startsWith("#")) assert.match(line, /^# (HELP|TYPE) jev_runner_\w+ /);
+      else assert.match(line, /^jev_runner_\w+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[\d.e+]+$/, line);
+    }
+    const value = (series: string) => Number(text.match(new RegExp(`^${series.replace(/[{}"]/g, "\\$&")} (\\S+)$`, "m"))?.[1]);
+    assert.equal(value("jev_runner_slots_capacity"), 2);
+    assert.equal(value("jev_runner_jobs{status=\"queued\"}"), 0);
+    // Earlier tests in this suite ran and cancelled runs against the demo app.
+    assert.ok(value("jev_runner_runs_finished_total{status=\"done\"}") >= 1, text);
+    assert.ok(value("jev_runner_sessions_total") >= 1);
+    assert.ok(value("jev_runner_run_duration_seconds_count") >= 1);
+    assert.match(text, /^jev_runner_findings_total\{level="(warn|fail)",category="[a-z0-9-]+"\} \d+$/m);
+    assert.doesNotMatch(text, /127\.0\.0\.1|http:/, "no target URLs in metrics");
+  });
 });

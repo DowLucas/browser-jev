@@ -10,6 +10,8 @@
 //   RUNNER_WATCH          "1" launches a headed browser (for Xvfb + noVNC)
 //   NTFY_URL              optional; e.g. https://ntfy.example.com/jev, notified when a run ends
 //   RUNNER_BLOCKED_SUFFIXES  comma-separated domains that may never be targeted (e.g. your own infra)
+//   RUNNER_METRICS_PORT   optional; serves Prometheus metrics at /metrics on this port, no auth. Only
+//                         publish it where the scraper sits (e.g. a docker network), never to the internet.
 //   RUNNER_ALLOW_PRIVATE  "1" allows localhost/private-IP targets (local use only, never on a shared network)
 //   TYPESAFE_API_KEY      Jev key, used by runs with useModel (the default)
 import { createWriteStream } from "node:fs";
@@ -28,6 +30,7 @@ import { FairSlots } from "../slots.ts";
 import { detectScreen } from "../watch.ts";
 import { type Job, JobStore, RequestError, type RunRequest, type TargetPolicy } from "./jobs.ts";
 import { LoginManager } from "./login.ts";
+import { RunnerMetrics } from "./metrics.ts";
 
 export interface RunnerOptions {
   token: string;
@@ -44,6 +47,7 @@ export class Runner {
   readonly slots: FairSlots;
   readonly live = new LiveHub();
   readonly logins: LoginManager;
+  readonly metrics = new RunnerMetrics();
   readonly #active = new Map<string, { cancel: () => void }>();
   #browser: Promise<Browser> | undefined;
   #draining = false;
@@ -84,6 +88,19 @@ export class Runner {
 
   status() {
     return { active: [...this.#active.keys()], slotsInUse: this.slots.inUse, capacity: this.slots.capacity };
+  }
+
+  async metricsText(): Promise<string> {
+    const jobs = { queued: 0, running: 0, done: 0, failed: 0, cancelled: 0, interrupted: 0 };
+    for (const j of await this.store.list()) jobs[j.status]++;
+    return this.metrics.render({
+      slotsCapacity: this.slots.capacity,
+      slotsInUse: this.slots.inUse,
+      activeRuns: this.#active.size,
+      liveSessions: this.live.liveSessions,
+      loginBrowsers: this.logins.open,
+      jobs,
+    });
   }
 
   /** Stop taking new work; running jobs finish their current step, write reports, and are marked interrupted. */
@@ -129,9 +146,10 @@ export class Runner {
         console.log(`[run ${job.id.slice(0, 8)}] ${text}`);
       };
       const log: RunLog = { info: (t) => line("info", t), warn: (t) => line("warn", t) };
+      let outcome: Awaited<ReturnType<typeof executeRun>> | undefined;
       try {
         const cfg = this.store.toConfig(job.request, job.personas ?? (await this.store.listPersonas()));
-        const outcome = await executeRun(cfg, {
+        outcome = await executeRun(cfg, {
           browser: await this.#getBrowser(),
           slots: this.slots,
           runId: job.id,
@@ -158,6 +176,7 @@ export class Runner {
       } finally {
         job.finishedAt = new Date().toISOString();
         await this.store.save(job);
+        this.metrics.recordRun(job.status, Date.parse(job.finishedAt) - Date.parse(job.startedAt!), outcome);
         logFile.end();
         this.#active.delete(job.id);
         await this.#notify(job);
@@ -363,10 +382,22 @@ async function main() {
   const server = createServer(createHandler(runner)).listen(port, () =>
     console.log(`Runner on :${port}, ${runner.slots.capacity} contexts, ${runner.opts.activeRuns} active runs`),
   );
+  // Metrics on their own port, so the reverse proxy in front of the API never serves them.
+  const metricsPort = Number(process.env.RUNNER_METRICS_PORT ?? 0);
+  const metricsServer = metricsPort
+    ? createServer((req, res) => {
+        if (req.method !== "GET" || req.url !== "/metrics") return void res.writeHead(404).end();
+        runner.metricsText().then(
+          (text) => res.writeHead(200, { "content-type": "text/plain; version=0.0.4" }).end(text),
+          (err: Error) => res.writeHead(500).end(err.message),
+        );
+      }).listen(metricsPort, () => console.log(`Metrics on :${metricsPort}/metrics`))
+    : undefined;
   // Watchtower and `docker stop` send SIGTERM: finish current steps, keep reports, then exit.
   const shutdown = async () => {
     console.log("Shutting down: finishing current steps and writing reports.");
     server.close();
+    metricsServer?.close();
     await runner.drain();
     process.exit(0);
   };

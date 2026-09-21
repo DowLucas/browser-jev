@@ -168,6 +168,8 @@ curl -X POST localhost:8080/runs -H "Authorization: Bearer $RUNNER_TOKEN" -H 'co
 | `POST /personas`, `PUT /personas/:name`, `DELETE /personas/:name` | Add, edit (or rename), delete an agent: `{"name","strategy","traits":[]}` |
 | `POST /personas/restore-built-ins` | Reset edited built-ins and bring back deleted ones; your own agents stay |
 
+**Metrics:** set `RUNNER_METRICS_PORT` (e.g. `9464`) to serve Prometheus metrics at `/metrics` on that port: queue length and slots, live sessions, finished runs by status, findings by level and category, model calls and tokens, and run duration. The port has no auth and carries no URLs or run ids; publish it only where your scraper is (a docker network), never through the reverse proxy.
+
 `authState` names a session saved with `npm run auth:save` and copied to `<data>/auth/<name>.json`. The runner refuses private, loopback and single-label targets, and any domain in `RUNNER_BLOCKED_SUFFIXES`, so it can't be pointed at its neighbours.
 
 **Deploy:** CI builds `ghcr.io/dowlucas/browser-jev-runner:latest` on every push to `main`. `deploy/docker-compose.yml` runs it with a Watchtower label, so hosts running Watchtower pick up new images automatically.

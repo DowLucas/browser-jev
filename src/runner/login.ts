@@ -271,6 +271,11 @@ export class LoginManager {
     await Promise.all([...this.#sessions.keys()].map((id) => this.close(id)));
   }
 
+  /** Login and recording browsers open now. */
+  get open(): number {
+    return this.#sessions.size;
+  }
+
   /** For tests: the page behind a login session. */
   pageOf(id: string): Page | undefined {
     return this.#sessions.get(id)?.page;

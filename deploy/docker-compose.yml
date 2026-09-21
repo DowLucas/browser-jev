@@ -11,6 +11,8 @@ services:
       # Browser contexts (sessions) open at once across all runs; about 0.3-0.5 GB each. 10 is the maximum.
       RUNNER_CONTEXTS: "10"
       RUNNER_ACTIVE_RUNS: "2"
+      # Prometheus metrics for a scraper on the same docker network; not published, not proxied.
+      RUNNER_METRICS_PORT: "9464"
     user: "1000:1000"
     init: true
     # Chromium uses /dev/shm heavily; Docker's 64 MB default crashes tabs.

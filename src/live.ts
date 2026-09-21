@@ -42,6 +42,11 @@ export class LiveHub {
     setInterval(() => this.#flushFrames(), FRAME_INTERVAL_MS).unref();
   }
 
+  /** Sessions exploring now (ended tiles that are still on screen do not count). */
+  get liveSessions(): number {
+    return [...this.#sessions.values()].filter((s) => !s.ended).length;
+  }
+
   forRun(runId: string): LiveSink {
     const key = (sessionId: string) => `${runId}/${sessionId}`;
     const get = (sessionId: string) => this.#sessions.get(key(sessionId));
