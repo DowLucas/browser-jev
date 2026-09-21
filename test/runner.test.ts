@@ -86,6 +86,7 @@ describe("runner service", () => {
       [{ ...demoRun, focus: { includePaths: "/products/*" } }, /focus must be/],
       [{ ...demoRun, setup: 'click button "Checkout"' }, /forbidden-control pattern/],
       [{ ...demoRun, setup: "teleport /x" }, /Setup line 1 .*unknown step/],
+      [{ ...demoRun, maxWaitSeconds: 301 }, /maxWaitSeconds must be an integer 1-300/],
     ];
     for (const [body, error] of cases) {
       const res = await submit(body);

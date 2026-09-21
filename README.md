@@ -111,6 +111,14 @@ A target is `<role> "<name>"`, or just `"<text>"` (visible text for `click`, the
 
 CLI: `--setup <file>`. Config file: `"setup"` as text or a list of lines. API: `"setup": "<text>"`.
 
+## Slow responses (AI chat, slow submits)
+
+After each action the explorer waits for the page to settle before judging it: no page changes and no requests in flight. When the action's own work is visibly still going, it keeps waiting, up to `--max-wait` seconds (default 45; *More options* in the UI; `maxWaitSeconds` in the API). That covers a request the action started, a WebSocket reply, an `aria-busy`, a progress bar, a spinner or typing indicator, or "Thinking…" text. So an AI answer that thinks for a while and then streams in gets judged once it is complete.
+
+- Long requests that were already open before the action (background long-polls) are not waited on. Neither is one the action started that shows no progress for 5 s.
+- If the page is still working when the wait runs out, the session records a `slow-response` finding (a warning) naming what was pending. Jev is told the page is still working, so a missing answer is not judged "broken". Agents also get a *wait for the page to finish responding* action.
+- The impatient persona never waits long: acting before things finish is its job.
+
 ## Modes: what may reach the server
 
 The tester always clicks, types and submits. The mode decides which of the resulting requests reach the server:

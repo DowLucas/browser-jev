@@ -13,7 +13,8 @@ export type ActionKind =
   | "forward"
   | "reload"
   | "goto"
-  | "press";
+  | "press"
+  | "wait";
 
 export interface Action {
   kind: ActionKind;
@@ -99,6 +100,8 @@ export interface CandidateContext {
   inFocus?: (url: string) => boolean;
   /** Offer "browser forward" only when there is somewhere to go forward to. */
   canGoForward: boolean;
+  /** The page is still working on the last action (a request or loading indicator): offer to wait for it. */
+  pageBusy?: boolean;
   /** URLs visited in this session, oldest first. */
   visited: string[];
   isForbidden: (text: string) => boolean;
@@ -162,6 +165,7 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
   }
 
   actions.push({ kind: "back" }, { kind: "reload" });
+  if (ctx.pageBusy) actions.push({ kind: "wait" });
   if (has("keyboard")) actions.push({ kind: "press", key: "Escape" });
   if (has("history")) {
     if (ctx.canGoForward) actions.push({ kind: "forward" });
@@ -284,6 +288,8 @@ export function describeAction(a: Action): string {
       return a.tamper ? `enter edited URL (${a.tamper}): ${a.url}` : `enter URL directly: ${a.url}`;
     case "press":
       return a.target ? `press ${a.key} on ${target}` : `press ${a.key}`;
+    case "wait":
+      return "wait for the page to finish responding";
     case "back":
     case "forward":
     case "reload":
@@ -394,6 +400,9 @@ export async function executeAction(page: Page, a: Action, timeout: number): Pro
     case "press":
       if (a.target) await (await target()).press(a.key ?? "Enter", { timeout });
       else await page.keyboard.press(a.key ?? "Escape");
+      return;
+    case "wait":
+      // The session does the waiting, with the long settle; there is nothing to do on the page.
       return;
   }
 }

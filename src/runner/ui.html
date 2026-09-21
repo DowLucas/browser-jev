@@ -324,6 +324,9 @@
             <label>Extra allowed hosts
               <input type="text" name="allowedHosts" placeholder="api.staging.example.dev">
               <span class="hint">Comma-separated, e.g. an API or CDN domain. The start URL's host is always allowed.</span></label>
+            <label>Wait for slow responses (seconds)
+              <input type="number" name="maxWaitSeconds" value="45" min="1" max="300">
+              <span class="hint">After a submit or a chat message, agents wait this long while the page is visibly still working. Raise it for slow AI replies.</span></label>
             <label class="check"><input type="checkbox" name="useModel" checked>
               <span>Jev judgment<small>Off: free checks only (errors, crashes, broken requests), random clicking, no model cost.</small></span></label>
           </div>
@@ -496,6 +499,7 @@ $("run-form").addEventListener("submit", async (e) => {
   if (focus.instructions || focus.includePaths.length || focus.excludePaths.length) request.focus = focus;
   if (request.mode === "interact") request.confirmDisposable = f.get("confirmDisposable") === "on";
   if (f.get("setup").trim()) request.setup = f.get("setup");
+  if (Number(f.get("maxWaitSeconds")) !== 45) request.maxWaitSeconds = Number(f.get("maxWaitSeconds"));
   if (f.get("authState").trim()) request.authState = f.get("authState").trim();
   $("run-error").textContent = "";
   try {
@@ -855,6 +859,7 @@ $("cc-apply").addEventListener("click", async () => {
     formField("focusPaths").value = s.includePaths.join(", ");
     formField("excludePaths").value = s.excludePaths.join(", ");
     formField("setup").value = s.setup ? `${s.setup}\n` : "";
+    if (s.maxWaitSeconds) formField("maxWaitSeconds").value = s.maxWaitSeconds;
     const changed = [];
     if (s.allowedWritePaths.length) {
       formField("allowedWritePaths").value = s.allowedWritePaths.join(", ");

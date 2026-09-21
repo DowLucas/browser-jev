@@ -383,6 +383,8 @@ describe("Claude Code focus prompt", () => {
     ];
     for (const [obj, error] of bad) assert.throws(() => parseFocusSuggestion(answer(obj), start, DEFAULTS.forbiddenPatterns), error);
     assert.throws(() => parseFocusSuggestion("I could not find the flow.", start, []), /No JSON object found/);
+    assert.throws(() => parseFocusSuggestion(answer({ ...good, maxWaitSeconds: 900 }), start, []), /maxWaitSeconds/);
+    assert.equal(parseFocusSuggestion(answer({ ...good, maxWaitSeconds: 90 }), start, []).maxWaitSeconds, 90);
   });
 });
 
@@ -410,6 +412,7 @@ describe("personas", () => {
     assert.equal(resolveConfig({ startUrl: "http://127.0.0.1/", workers: MAX_PARALLEL_SESSIONS }).workers, MAX_PARALLEL_SESSIONS);
     assert.throws(() => resolveConfig({ startUrl: "http://127.0.0.1/", workers: MAX_PARALLEL_SESSIONS + 1 }), /at most 10/);
     assert.throws(() => resolveConfig({ startUrl: "http://127.0.0.1/", personas: [] }), /At least one persona/);
+    assert.throws(() => resolveConfig({ startUrl: "http://127.0.0.1/", maxWaitMs: 500 }), /max wait must be 1-300 seconds/);
   });
 });
 

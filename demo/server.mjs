@@ -9,7 +9,7 @@ let dangerousHits = 0;
 
 const nav = `<nav><a href="/">Home</a> · <a href="/products">Products</a> · <a href="/search">Search</a> ·
   <a href="/orders/new">New order</a> · <a href="/orders">Orders</a> · <a href="/settings">Settings</a> ·
-  <a href="/help">Help</a></nav>`;
+  <a href="/assistant">Assistant</a> · <a href="/help">Help</a></nav>`;
 
 const layout = (title, body, { withNav = true } = {}) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${title}</title>
@@ -124,6 +124,52 @@ const routes = {
       ? layout("Your account", "<p>Signed in as tester.</p>")
       : [303, "", { location: "/login" }],
 
+  // A slow AI-style assistant: it "thinks", then streams its answer over one long GET request.
+  "GET /assistant": () =>
+    layout("Assistant", `<form id="ask"><label>Message <input name="q" autocomplete="off"></label>
+      <button type="submit">Send</button></form>
+      <div id="log" aria-live="polite"></div>
+      <script>
+        document.getElementById("ask").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const q = e.target.q.value;
+          const log = document.getElementById("log");
+          const turn = document.createElement("div");
+          turn.innerHTML = '<p class="you"></p><p class="typing" aria-busy="true">Thinking…</p><p class="answer"></p>';
+          turn.querySelector(".you").textContent = "You: " + q;
+          log.append(turn);
+          const res = await fetch("/api/assistant?q=" + encodeURIComponent(q));
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          turn.querySelector(".typing").remove();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            turn.querySelector(".answer").textContent += decoder.decode(value);
+          }
+        });
+      </script>`),
+  "GET /api/assistant": (req) => ({
+    stream: async (res) => {
+      const q = new URL(req.url, "http://x").searchParams.get("q") ?? "";
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+      // PLANTED: an empty message is never answered; the page shows "Thinking…" forever.
+      if (!q.trim()) {
+        const hang = setTimeout(() => res.end(), 120_000);
+        req.on("close", () => clearTimeout(hang));
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2_500));
+      const words = `Thanks for asking about "${q.slice(0, 40)}". Here is a considered answer, streamed one word at a time the way AI assistants do. Answer complete.`.split(" ");
+      for (const word of words) {
+        if (res.destroyed) return;
+        res.write(word + " ");
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      res.end();
+    },
+  }),
+
   // PLANTED: dead end, no navigation.
   "GET /help": () => layout("Help", "<p>Contact your administrator.</p>", { withNav: false }),
 
@@ -156,6 +202,7 @@ createServer(async (req, res) => {
   const [handler, params] = match(req.method, pathname);
   try {
     const out = handler ? await handler(req, params) : [404, layout("Not found", "<p>Nothing here.</p>")];
+    if (out && typeof out.stream === "function") return await out.stream(res);
     const [status, body, headers = {}] = Array.isArray(out) ? out : [200, out];
     res.writeHead(status, { "content-type": "text/html; charset=utf-8", ...headers }).end(body);
   } catch (err) {

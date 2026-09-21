@@ -71,7 +71,9 @@ export async function judgeStep(
         "Does the current page show clear evidence that something is broken? For example: an error " +
           "page, missing data where data is expected, or the last action visibly doing nothing. " +
           "A submit blocked by browser validation (see fieldsBlockedByBrowserValidation) is working " +
-          "as intended. Behavior described in the spec as intended is not broken.",
+          "as intended. Behavior described in the spec as intended is not broken. If pageStillWorking " +
+          "is set, the app has not finished responding yet: a missing answer or result is not evidence " +
+          "of breakage on its own.",
       ),
       count_mismatch: noul(
         "Look at the ariaSnapshot. Is there a heading or text stating a count of results or items, " +
@@ -98,7 +100,7 @@ export async function judgeStep(
       ),
       dead_end: noul(
         "Is this page a dead end, with no visible way for the user to continue or return other than " +
-          "the browser's back button?",
+          "the browser's back button? A page that is still loading (pageStillWorking) is not a dead end.",
       ),
       severity: score("If anything is wrong on this page, how severe is it for the end user?", SEVERITY_RUBRIC),
       next_action: choice(

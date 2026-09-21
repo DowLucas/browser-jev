@@ -154,7 +154,11 @@ export async function runSession(
   await Settler.install(context);
   const page = await context.newPage();
   const settler = new Settler(page);
-  const settle = () => settler.wait(page, SETTLE[persona.traits.includes("hasty") ? "hasty" : "normal"]);
+  const hasty = persona.traits.includes("hasty");
+  /** Settle before judging. A hasty persona never waits long: acting on a short fuse is its point. */
+  const settle = () => settler.wait(page, { ...SETTLE[hasty ? "hasty" : "normal"], maxWaitMs: hasty ? SETTLE.hasty.timeoutMs : cfg.maxWaitMs });
+  /** Wait for a slow response whoever is testing: setup steps, and the explicit wait action. */
+  const settleLong = () => settler.wait(page, { ...SETTLE.normal, maxWaitMs: cfg.maxWaitMs });
   const live = deps.live;
   live?.started(sessionId, { persona: personaName, steps: cfg.steps });
   const stopScreencast = live
@@ -245,8 +249,10 @@ export async function runSession(
       live?.step(sessionId, { step: 0, url: new URL(page.url()).pathname, next: trigger, flags: [] });
       let failure: string | undefined;
       try {
+        await settler.markAction();
         await runSetupStep(page, step, cfg.startUrl, cfg.actionTimeoutMs);
-        await settle();
+        const r = await settleLong();
+        if (!r.settled && r.pending) throw new Error(`the page was still working after ${Math.round(r.waitedMs / 1000)}s (${r.pending})`);
       } catch (err) {
         failure = (err as Error).message.split("\n")[0];
       }
@@ -294,7 +300,18 @@ export async function runSession(
         log.info(`[${sessionId}] stopping after ${step} steps`);
         break;
       }
-      await settle();
+      const work = await settle();
+      /** The last action's work (a request, a loading indicator) had not finished when the wait ended. */
+      const stillWorking = !work.settled && work.pending && lastAction ? work : undefined;
+      if (stillWorking && !hasty && stillWorking.waitedMs >= cfg.maxWaitMs - 250) {
+        recordCode(
+          "slow-response",
+          `Still working ${Math.round(stillWorking.waitedMs / 1000)}s after "${trigger}": ${stillWorking.pending}`,
+          page.url(),
+          step,
+          {},
+        );
+      }
       // Back/forward can leave the app (e.g. to about:blank); return to the start instead of judging that.
       if (!isAppUrl(page.url(), cfg.allowedHosts)) {
         await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
@@ -388,6 +405,7 @@ export async function runSession(
         isInApp: (href) => isAppUrl(href, cfg.allowedHosts),
         inFocus: (href) => inFocus(href, cfg.focus),
         canGoForward,
+        pageBusy: !!stillWorking,
         elements,
         visited,
         isForbidden,
@@ -400,6 +418,9 @@ export async function runSession(
       const flagged: string[] = [];
       const observed = lastActionError
         ? `the action failed: ${lastActionError}`
+        : stillWorking
+          ? `the page was still working on the last action when this was captured, after ${Math.round(stillWorking.waitedMs / 1000)}s ` +
+            `(${stillWorking.pending}); a result that is missing may simply not have arrived yet`
         : lastActionNote
           ? lastActionNote
           : unchanged && step > 0
@@ -414,6 +435,7 @@ export async function runSession(
           title: await page.title().catch(() => ""),
           lastAction: trigger,
           lastActionResult: observed,
+          ...(stillWorking ? { pageStillWorking: `${stillWorking.pending}, after ${Math.round(stillWorking.waitedMs / 1000)}s` } : {}),
           fieldsBlockedByBrowserValidation: await invalidFields(page),
           recentActions: result.actionLog.slice(-HISTORY_IN_STATE),
           valuesTypedThisSession: [...typed],
@@ -473,6 +495,15 @@ export async function runSession(
       lastActionNote = expectedNoChange(action);
       popupOpened = false;
       try {
+        if (action.kind === "wait") {
+          // Not a new action: the previous one's requests stay its work, so do not markAction.
+          const r = await settleLong();
+          lastActionNote = r.settled
+            ? `the tester waited ${Math.round(r.waitedMs / 1000)}s and the page finished responding`
+            : `the tester waited ${Math.round(r.waitedMs / 1000)}s and the page was still working (${r.pending})`;
+          continue;
+        }
+        await settler.markAction();
         await executeAction(page, action, cfg.actionTimeoutMs);
         const moved = page.url() !== url;
         if (popupOpened) lastActionNote = "the action opened a new tab or window, which the tester closed, so the current page is not expected to change";

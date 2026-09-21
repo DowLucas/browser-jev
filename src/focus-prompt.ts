@@ -18,6 +18,8 @@ export interface FocusSuggestion {
   setup: string;
   /** Write paths setup needs, for observe-writes. */
   allowedWritePaths: string[];
+  /** How long to wait for slow responses, when the flow has them (e.g. an LLM behind a chat box). */
+  maxWaitSeconds?: number;
   notes?: string;
 }
 
@@ -42,6 +44,7 @@ after it, in exactly this shape:
   "excludePaths": [],
   "setup": ["goto /...", "click button \\"...\\""],
   "allowedWritePaths": [],
+  "maxWaitSeconds": 45,
   "notes": "..."
 }
 \`\`\`
@@ -102,6 +105,12 @@ later pages can only be reached through it. Keep it minimal: every agent's write
 through too and change data on the target, so say in notes that the target must be a disposable
 staging environment when you list any.
 
+## maxWaitSeconds: how long a slow response may take (optional)
+After an action, agents keep waiting while the page is visibly still working, up to this many seconds
+(default 45, max 300). Raise it when the flow calls something slow: an LLM or other AI service, report
+generation, payment or third-party APIs. Look at what the endpoints behind the flow call, and any
+timeouts in the code. Leave it out otherwise.
+
 ## notes
 One or two sentences: what I must do in the runner (pick a saved login, a mode) or anything you were
 unsure about.`;
@@ -153,6 +162,10 @@ export function parseFocusSuggestion(text: string, startUrl: string, forbiddenPa
   const steps = parseSetup(setupLines);
   const focus = validateFocus({ instructions: text_("instructions"), includePaths: strings("includePaths"), excludePaths: strings("excludePaths") }, entry);
   const allowedWritePaths = strings("allowedWritePaths");
+  const maxWait = raw.maxWaitSeconds;
+  if (maxWait !== undefined && maxWait !== null && !(Number.isInteger(maxWait) && (maxWait as number) >= 1 && (maxWait as number) <= 300)) {
+    throw new Error('"maxWaitSeconds" must be a whole number from 1 to 300');
+  }
   const bad = allowedWritePaths.find((p) => !p.startsWith("/"));
   if (bad) throw new Error(`Write path "${bad}" must start with "/"`);
   // The same allowlist and forbidden-control checks as a run.
@@ -167,6 +180,7 @@ export function parseFocusSuggestion(text: string, startUrl: string, forbiddenPa
     excludePaths: focus.excludePaths,
     setup: steps.map(formatStep).join("\n"),
     allowedWritePaths,
+    ...(typeof maxWait === "number" ? { maxWaitSeconds: maxWait } : {}),
     ...(text_("notes") ? { notes: text_("notes") } : {}),
   };
 }

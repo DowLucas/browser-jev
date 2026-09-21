@@ -62,6 +62,11 @@ export interface Config {
   maxSnapshotChars: number;
   maxActions: number;
   actionTimeoutMs: number;
+  /**
+   * How long to keep waiting after an action while its own work is visibly pending (a request it
+   * started, a loading or typing indicator): slow submits and AI replies. Hasty personas never wait this long.
+   */
+  maxWaitMs: number;
   headless: boolean;
   /** What may reach the server: see MODES in safety.ts. */
   mode: Mode;
@@ -121,6 +126,7 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   maxSnapshotChars: 60_000,
   maxActions: 120,
   actionTimeoutMs: 5_000,
+  maxWaitMs: 45_000,
   headless: true,
   mode: "observe",
   allowedWritePaths: [],
@@ -144,6 +150,7 @@ const USAGE = `Usage: npm run explore -- [options]
   --focus-path <path>      Stay within this path (repeatable): /cart, or /checkout/* for it and below
   --exclude-path <path>    Never enter this path (repeatable), same syntax
                            The start URL is the entry point: sessions return to it when they leave the area
+  --max-wait <seconds>     Wait up to this long for a slow response after an action (default ${DEFAULTS.maxWaitMs / 1000})
   --setup <file>           Setup steps replayed before each session (goto, click, fill, select, press, wait for, back)
   --spec <file>            Spec / ticket describing intended behavior
   --storage-state <file>   Playwright storage state for the test account
@@ -175,6 +182,7 @@ export async function loadConfig(argv: string[]): Promise<Config> {
       "no-model": { type: "boolean" },
       focus: { type: "string" },
       setup: { type: "string" },
+      "max-wait": { type: "string" },
       "focus-path": { type: "string", multiple: true },
       "exclude-path": { type: "string", multiple: true },
       spec: { type: "string" },
@@ -219,6 +227,7 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     headless: values.headed || values.watch ? false : undefined,
     watch: values.watch,
     slowMoMs: toInt(values["slow-mo"], "slow-mo"),
+    maxWaitMs: values["max-wait"] === undefined ? undefined : toInt(values["max-wait"], "max-wait")! * 1000,
     mode: values.mode as Mode | undefined,
     allowedWritePaths: values["allow-write"],
     confirmDisposable: values["confirm-disposable"],
@@ -275,6 +284,7 @@ function validate(layer: ConfigLayer): Config {
   for (const key of ["sessions", "workers", "steps"] as const) {
     if (!(Number(cfg[key]) >= 1)) throw new Error(`${key} must be >= 1`);
   }
+  if (!(Number(cfg.maxWaitMs) >= 1_000 && Number(cfg.maxWaitMs) <= 300_000)) throw new Error("max wait must be 1-300 seconds");
   if (Number(cfg.workers) > MAX_PARALLEL_SESSIONS) {
     throw new Error(`workers must be at most ${MAX_PARALLEL_SESSIONS} (sessions open at once)`);
   }

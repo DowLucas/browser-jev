@@ -30,6 +30,7 @@ const PLANTED: Record<string, Check> = {
   "promo banner covers the navigation": (g) => g.category === "covered-control",
   "reflected XSS on /search": (g) => g.category === "xss-dialog",
   "500 on a long order name (POST /orders)": (g) => g.category === "http-5xx" && g.example.message.startsWith("POST"),
+  "assistant never answers an empty message": (g) => g.category === "slow-response" && at(g, "/assistant"),
 };
 
 const cfg = resolveConfig({

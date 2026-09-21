@@ -19,7 +19,8 @@ export type FreeCategory =
   | "horizontal-overflow"
   | "broken-anchor"
   | "fence-side-effect"
-  | "setup-failed";
+  | "setup-failed"
+  | "slow-response";
 
 export interface HttpError {
   method: string;

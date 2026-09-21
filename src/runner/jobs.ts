@@ -31,6 +31,8 @@ export interface RunRequest {
   extraForbiddenPatterns?: string[];
   /** Where to concentrate: { instructions?, includePaths?, excludePaths? }. The start URL is the entry point. */
   focus?: { instructions?: string; includePaths?: string[]; excludePaths?: string[] };
+  /** Wait up to this long for a slow response after an action (AI replies, slow submits). */
+  maxWaitSeconds?: number;
   /** Setup script run before each session: one step per line (goto, click, fill, select, press, wait for, back). */
   setup?: string;
   /** Inline spec / ticket text. */
@@ -131,6 +133,7 @@ const REQUEST_SCHEMA: Record<keyof RunRequest, { check: Check; expected: string 
       Object.entries(v).every(([k, x]) => (k === "instructions" ? isString(x) : ["includePaths", "excludePaths"].includes(k) && isStringArray(x))),
     expected: "{ instructions?: string, includePaths?: string[], excludePaths?: string[] }",
   },
+  maxWaitSeconds: { check: isIntUpTo(300), expected: "an integer 1-300" },
   setup: { check: (v) => isString(v) && (v as string).length <= 20_000, expected: "a string of setup steps, one per line" },
   spec: { check: isString, expected: "a string" },
   authState: { check: isString, expected: "a string" },
@@ -198,11 +201,16 @@ export class JobStore {
       if (value !== undefined && !rule.check(value)) throw new RequestError(`${key} must be ${rule.expected}`);
     }
     if (!request.startUrl) throw new RequestError("startUrl is required");
-    const { extraForbiddenPatterns = [], spec: _spec, authState, personas, ...rest } = request;
+    const { extraForbiddenPatterns = [], spec: _spec, authState, personas, maxWaitSeconds, ...rest } = request;
     let cfg: Config;
     try {
       const chosen = personas ? resolvePersonas(personas, library) : [...library];
-      cfg = resolveConfig({ ...rest, personas: chosen, storageStatePath: authState && this.authPath(authState) });
+      cfg = resolveConfig({
+        ...rest,
+        personas: chosen,
+        storageStatePath: authState && this.authPath(authState),
+        ...(maxWaitSeconds ? { maxWaitMs: maxWaitSeconds * 1000 } : {}),
+      });
       cfg.forbiddenPatterns = [...cfg.forbiddenPatterns, ...extraForbiddenPatterns];
       for (const p of cfg.forbiddenPatterns) new RegExp(p);
       assertSetupAllowed(cfg);
