@@ -61,6 +61,25 @@ A 4xx on a URL the tamperer edited is the app correctly refusing it, so it is no
 
 **At most 10 sessions run at once**: `workers` per run, and `RUNNER_CONTEXTS` across the whole runner.
 
+## Focus: one flow or area
+
+By default a run explores the whole app. Focus points it at one part:
+
+| Part | What it does |
+|---|---|
+| Instructions (`--focus`) | Given to every agent alongside its own instructions: what to concentrate on, e.g. "the checkout flow: cart, shipping, payment" |
+| Include paths (`--focus-path`, repeatable) | Enforced in code. Links, revisits and edited URLs outside these paths are never offered. `/cart` is exact, `/checkout/*` covers `/checkout` and everything below it |
+| Exclude paths (`--exclude-path`, repeatable) | Never entered, even inside an included area |
+
+The start URL is the entry point, so it must be inside the area. A submit or a script can still land outside the area. When that happens, the session records what that page signalled (a 500 there still counts) and returns to the entry page. If the entry page itself redirects outside the area (usually to a login page), the session stops and says so: add a saved login. The report lists the focus, the distinct pages covered, and how often sessions had to be sent back.
+
+```sh
+npm run explore -- --url https://staging.example.dev/cart --focus "Checkout: quantities, discount codes, totals" \
+  --focus-path /cart --focus-path "/checkout/*" --exclude-path /checkout/pay
+```
+
+In the runner UI it is the *Focus* section of the *New run* form. In the API it is `"focus": {"instructions", "includePaths", "excludePaths"}`.
+
 ## Modes: what may reach the server
 
 The tester always clicks, types and submits. The mode decides which of the resulting requests reach the server:
@@ -104,7 +123,7 @@ curl -X POST localhost:8080/runs -H "Authorization: Bearer $RUNNER_TOKEN" -H 'co
 | `POST /runs` | Submit a run. Read-only by default; unknown or mistyped fields are rejected |
 | `GET /runs`, `GET /runs/:id` | Status and outcome |
 | `GET /runs/:id/log` | Live progress log |
-| `GET /runs/:id/report`, `/report.json` | Findings |
+| `GET /runs/:id/report`, `/report.json` | Findings, plus the run summary (focus, pages covered) |
 | `POST /runs/:id/cancel` | Cancel a queued run, or stop a running one (it keeps its report) |
 | `GET /personas` | The agent library, the behaviours they can use, and which agents are built-in |
 | `POST /personas`, `PUT /personas/:name`, `DELETE /personas/:name` | Add, edit (or rename), delete an agent: `{"name","strategy","traits":[]}` |
@@ -138,6 +157,7 @@ npm run explore -- --config explorer.config.json --baseline baseline.json
 | Safety: allowlist (start URL host + explicit extras), refuse production-looking hosts, block all off-allowlist requests, skip forbidden controls by name and href | `src/safety.ts`, `src/config.ts` |
 | One browser, many contexts | `src/cli.ts` |
 | Spec/ticket in the state, so intended changes are not flagged | `--spec <file>` |
+| Focus: instructions in the state and the action question; include/exclude paths enforced on candidate actions, with a return to the entry page | `src/focus.ts`, `--focus`, `--focus-path` |
 
 Next actions are sampled from Jev's probability distribution rather than taking the top choice. That way parallel workers with the same persona spread out instead of walking the same path.
 

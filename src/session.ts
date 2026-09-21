@@ -13,11 +13,12 @@ import {
   type Action,
 } from "./actions.ts";
 import type { Config } from "./config.ts";
-import { fingerprint, type Finding } from "./findings.ts";
+import { fingerprint, type Finding, normalizePath } from "./findings.ts";
 import { classifyJudgment, judgeStep, type Judgment } from "./judge.ts";
 import { ariaSnapshot, enumerateElements, invalidFields, isBlank, layoutIssues } from "./page-model.ts";
 import type { Persona } from "./personas.ts";
 import { forbiddenMatcher, installNetworkFence, isAppUrl } from "./safety.ts";
+import { inFocus } from "./focus.ts";
 import { type LiveSink, startScreencast } from "./live.ts";
 import { Settler } from "./settle.ts";
 import { placeWindow, showNextAction, type WindowBounds } from "./watch.ts";
@@ -56,6 +57,10 @@ export interface SessionResult {
   /** Writes that reached the server, with how often each was sent. */
   writesSent: Record<string, number>;
   judgeErrors: number;
+  /** Distinct pages (ids collapsed) judged inside the focus area; with no focus, the whole app. */
+  pagesCovered: string[];
+  /** Times the session left the focus area and was returned to the entry page. */
+  focusReturns: number;
   tracePath?: string;
 }
 
@@ -107,7 +112,10 @@ export async function runSession(
     blockedWrites: [],
     writesSent: {},
     judgeErrors: 0,
+    pagesCovered: [],
+    focusReturns: 0,
   };
+  const covered = new Set<string>();
   const blocked = new Set<string>();
   const blockedWrites = new Set<string>();
   const visited: string[] = [];
@@ -237,7 +245,30 @@ export async function runSession(
         trigger = "start";
         lastAction = undefined;
       }
+      // A submit or a script can still leave the focus area. Keep what that page signalled, then go back in.
+      if (!inFocus(page.url(), cfg.focus)) {
+        const left = page.url();
+        recordFree(freeOracle(collector.drain(), false), left, step, blockedSinceDrain);
+        blockedSinceDrain = 0;
+        await page.goto(cfg.startUrl, { timeout: cfg.actionTimeoutMs * 3 });
+        await settle();
+        if (!inFocus(page.url(), cfg.focus)) {
+          throw new Error(
+            `the entry page redirects outside the focus area (to ${new URL(page.url()).pathname}); ` +
+              "if that is a login page, the run needs a saved login",
+          );
+        }
+        collector.drain();
+        result.focusReturns++;
+        trigger = "start";
+        lastAction = undefined;
+        lastActionError = undefined;
+        lastActionNote =
+          `the last action led outside the focus area (${new URL(left).pathname}), so the test harness returned ` +
+          "to the entry page; this return is not app behaviour";
+      }
       const url = page.url();
+      covered.add(normalizePath(url));
       if (visited.at(-1) !== url) visited.push(url);
 
       // 1. Free oracle: code-only checks, before any model call.
@@ -297,6 +328,7 @@ export async function runSession(
         persona,
         currentUrl: url,
         isInApp: (href) => isAppUrl(href, cfg.allowedHosts),
+        inFocus: (href) => inFocus(href, cfg.focus),
         canGoForward,
         elements,
         visited,
@@ -318,6 +350,7 @@ export async function runSession(
       if (client) {
         const state = {
           persona: persona.strategy,
+          ...(cfg.focus.instructions ? { focus: cfg.focus.instructions } : {}),
           spec: deps.spec ?? "No spec provided.",
           url,
           title: await page.title().catch(() => ""),
@@ -333,7 +366,7 @@ export async function runSession(
         };
         const notes = (a: Action) => actionNotes(a, tried, visited);
         try {
-          const j = await judgeStep(client, state, actions, persona, notes, random);
+          const j = await judgeStep(client, state, actions, persona, notes, random, cfg.focus.instructions);
           for (const issue of outage ? [] : classifyJudgment(j, cfg.thresholds)) {
             record({ ...issue, source: "judgment", url, trigger, step, observed });
             flagged.push(`${issue.level === "fail" ? "FAIL" : "warn"} ${issue.category} ${issue.confidence.toFixed(2)}`);
@@ -432,6 +465,7 @@ export async function runSession(
     }
     await context.close().catch(() => {});
     result.blockedHosts = [...blocked];
+    result.pagesCovered = [...covered];
     result.blockedWrites = [...blockedWrites];
   }
   return result;

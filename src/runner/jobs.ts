@@ -29,6 +29,8 @@ export interface RunRequest {
   thresholds?: Partial<Config["thresholds"]>;
   /** Added to the default forbidden-control patterns; the defaults cannot be removed. */
   extraForbiddenPatterns?: string[];
+  /** Where to concentrate: { instructions?, includePaths?, excludePaths? }. The start URL is the entry point. */
+  focus?: { instructions?: string; includePaths?: string[]; excludePaths?: string[] };
   /** Inline spec / ticket text. */
   spec?: string;
   /** Name of a saved login session in <data>/auth, e.g. "staging" for auth/staging.json. */
@@ -118,6 +120,15 @@ const REQUEST_SCHEMA: Record<keyof RunRequest, { check: Check; expected: string 
   confirmDisposable: { check: isBool, expected: "a boolean" },
   thresholds: { check: isThresholds, expected: "{warnConfidence, strongConfidence, failConfidence: 0-1, warnSeverity, failSeverity: 0-4}" },
   extraForbiddenPatterns: { check: isStringArray, expected: "an array of regex strings" },
+  // Field-level checks (paths start with "/", the start URL is inside) happen in validateFocus.
+  focus: {
+    check: (v) =>
+      !!v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      Object.entries(v).every(([k, x]) => (k === "instructions" ? isString(x) : ["includePaths", "excludePaths"].includes(k) && isStringArray(x))),
+    expected: "{ instructions?: string, includePaths?: string[], excludePaths?: string[] }",
+  },
   spec: { check: isString, expected: "a string" },
   authState: { check: isString, expected: "a string" },
 };

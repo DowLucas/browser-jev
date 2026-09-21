@@ -197,7 +197,8 @@ export function createHandler(runner: Runner) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     const send = (status: number, body: unknown, type = "application/json") => {
       res.writeHead(status, { "content-type": type });
-      res.end(type === "application/json" ? JSON.stringify(body, null, 2) : String(body));
+      // A string is already the body (e.g. report.json read from disk); encoding it again would quote it.
+      res.end(type === "application/json" && typeof body !== "string" ? JSON.stringify(body, null, 2) : String(body));
     };
     const { pathname } = new URL(req.url ?? "/", "http://runner");
     const parts = pathname.split("/").filter(Boolean);

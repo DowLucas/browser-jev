@@ -57,6 +57,8 @@ export async function judgeStep(
   persona: Persona,
   actionNotes: (a: Action) => string,
   random: () => number,
+  /** The run's focus instructions, if any: they narrow where the tester goes, not what counts as a bug. */
+  focus?: string,
 ): Promise<Judgment> {
   const actionCriteria = Object.fromEntries(
     actions.map((a, i) => [`a${i}`, `${describeAction(a)}${actionNotes(a)}`]),
@@ -101,6 +103,10 @@ export async function judgeStep(
       severity: score("If anything is wrong on this page, how severe is it for the end user?", SEVERITY_RUBRIC),
       next_action: choice(
         `You are exploring this web app as a tester. ${persona.strategy} ` +
+          (focus
+            ? `This run is focused on: ${focus}. Stay in that area and work through it in depth; ` +
+              "pick actions elsewhere only when they lead back into it. "
+            : "") +
           "Pick the next action most likely to uncover a bug nobody has tested for. " +
           "Prefer actions that have not been tried yet.",
         actionCriteria,

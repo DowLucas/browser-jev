@@ -82,6 +82,8 @@ describe("runner service", () => {
       [{ ...demoRun, workers: 11 }, /workers must be an integer 1-10/],
       [{ ...demoRun, personas: ["no-such-agent"] }, /Unknown persona "no-such-agent"/],
       [{ ...demoRun, personas: [{ name: "inline", strategy: "x", traits: [] }] }, /personas must be an array of persona names/],
+      [{ ...demoRun, focus: { includePaths: ["/products/*"] } }, /start URL \/ is outside the focus paths/],
+      [{ ...demoRun, focus: { includePaths: "/products/*" } }, /focus must be/],
     ];
     for (const [body, error] of cases) {
       const res = await submit(body);
@@ -120,6 +122,26 @@ describe("runner service", () => {
     await api(`/runs/${job.id}/cancel`, { method: "POST" });
     await waitFor(job.id, ["cancelled", "done"]);
     await api("/personas/cart-hunter", { method: "DELETE" });
+  });
+
+  it("keeps a focused run inside its area and reports what it covered", async () => {
+    const { status, body: job } = await submit({
+      ...demoRun,
+      startUrl: `http://127.0.0.1:${DEMO_PORT}/products`,
+      steps: 8,
+      sessions: 2,
+      workers: 2,
+      personas: ["out-of-order", "url-tamperer"],
+      focus: { instructions: "The product catalogue", includePaths: ["/products/*"], excludePaths: ["/products/7"] },
+    });
+    assert.equal(status, 201, JSON.stringify(job));
+    const done = await waitFor(job.id, ["done", "failed"]);
+    assert.equal(done.status, "done", done.error);
+    const { body: report } = await api(`/runs/${job.id}/report.json`);
+    const covered: string[] = report.summary.pagesCovered;
+    assert.ok(covered.length > 0);
+    for (const page of covered) assert.match(page, /^\/products(\/|$)/, `covered ${page}, outside the focus`);
+    assert.match(report.summary.focus, /The product catalogue/);
   });
 
   it("queues runs beyond the active limit, runs them in order, and cancels a queued one", async () => {

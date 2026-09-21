@@ -95,6 +95,8 @@ export interface CandidateContext {
   currentUrl: string;
   /** Whether a URL belongs to the app under test; links elsewhere are not followed. */
   isInApp: (url: string) => boolean;
+  /** Whether a URL is inside the run's focus area; links and direct entries elsewhere are not offered. */
+  inFocus?: (url: string) => boolean;
   /** Offer "browser forward" only when there is somewhere to go forward to. */
   canGoForward: boolean;
   /** URLs visited in this session, oldest first. */
@@ -109,6 +111,7 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
   const actions: Action[] = [];
   let skipped = 0;
   const has = (t: Persona["traits"][number]) => ctx.persona.traits.includes(t);
+  const inFocus = ctx.inFocus ?? (() => true);
 
   const here = withoutHash(ctx.currentUrl);
   for (const el of ctx.elements) {
@@ -121,6 +124,8 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
     // Links out of the app (stores, social, mailto:) are blocked or open a tab we close: they
     // test nothing here and read as "the click did nothing".
     if (el.href !== undefined && !ctx.isInApp(el.href)) continue;
+    // Leaving the focus area would only get the session sent back to the entry page.
+    if (el.href !== undefined && !inFocus(el.href)) continue;
     const inPage = el.href !== undefined && withoutHash(el.href) === here;
     // A link to the page we are on tests nothing and reads as "the click did nothing".
     if (inPage && (!new URL(el.href!).hash || el.href === ctx.currentUrl)) continue;
@@ -160,11 +165,11 @@ export function candidateActions(ctx: CandidateContext): { actions: Action[]; sk
   if (has("keyboard")) actions.push({ kind: "press", key: "Escape" });
   if (has("history")) {
     if (ctx.canGoForward) actions.push({ kind: "forward" });
-    for (const url of new Set(ctx.visited.slice(-8))) actions.push({ kind: "goto", url });
+    for (const url of new Set(ctx.visited.slice(-8))) if (inFocus(url)) actions.push({ kind: "goto", url });
   }
   if (has("url-tamper")) {
     const tampered = shuffle(tamperedUrls(ctx.currentUrl), ctx.random).slice(0, MAX_TAMPERED);
-    for (const t of tampered) if (ctx.isInApp(t.url)) actions.push({ kind: "goto", url: t.url, tamper: t.change });
+    for (const t of tampered) if (ctx.isInApp(t.url) && inFocus(t.url)) actions.push({ kind: "goto", url: t.url, tamper: t.change });
   }
 
   return { actions: capActions(actions, ctx.maxActions, ctx.random), skipped };

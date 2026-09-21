@@ -145,6 +145,19 @@
           <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
         </div>
         <fieldset class="modes" style="grid-column:1/-1">
+          <legend>Focus (optional): point the run at one flow or area</legend>
+          <label>What to concentrate on. Every agent gets this with its own instructions.
+            <textarea name="focusInstructions" maxlength="2000" style="min-height:60px"
+              placeholder="The checkout flow: cart, shipping address, delivery options and the order summary. Quantities, discount codes and totals matter most."></textarea></label>
+          <div class="row" style="align-items:start">
+            <label style="flex:1;min-width:240px">Stay within these paths (comma-separated; exact, or ending in /* for it and below)
+              <input type="text" name="focusPaths" placeholder="/cart, /checkout/*"></label>
+            <label style="flex:1;min-width:240px">Never enter these paths
+              <input type="text" name="excludePaths" placeholder="/checkout/pay"></label>
+          </div>
+          <span class="muted" style="font-size:12px">The start URL is the entry point: it must be inside the paths, and sessions return to it when they leave the area.</span>
+        </fieldset>
+        <fieldset class="modes" style="grid-column:1/-1">
           <legend>Mode: what may reach the server</legend>
           <label class="mode"><input type="radio" name="mode" value="observe" checked>
             <span><b>Observe</b>: clicks, types and submits, but only page loads and reads reach the server. Safe on live sites.</span></label>
@@ -280,6 +293,10 @@ $("run-form").addEventListener("submit", async (e) => {
   if (request.mode === "observe-writes") {
     request.allowedWritePaths = f.get("allowedWritePaths").split(",").map((p) => p.trim()).filter(Boolean);
   }
+  const list = (name) => f.get(name).split(",").map((p) => p.trim()).filter(Boolean);
+  const focus = { instructions: f.get("focusInstructions").trim(), includePaths: list("focusPaths"), excludePaths: list("excludePaths") };
+  if (!focus.instructions) delete focus.instructions;
+  if (focus.instructions || focus.includePaths.length || focus.excludePaths.length) request.focus = focus;
   if (request.mode === "interact") request.confirmDisposable = f.get("confirmDisposable") === "on";
   if (f.get("authState").trim()) request.authState = f.get("authState").trim();
   $("run-error").textContent = "";
@@ -551,6 +568,13 @@ $("login-save").addEventListener("click", async () => {
   } catch (err) { $("login-current-url").textContent = err.message; }
 });
 
+function focusTag(focus) {
+  if (!focus) return "";
+  const title = [focus.instructions, focus.includePaths?.length && `within ${focus.includePaths.join(", ")}`,
+    focus.excludePaths?.length && `never ${focus.excludePaths.join(", ")}`].filter(Boolean).join(" · ");
+  return `<span class="mode-tag" title="${esc(title)}">focus</span>`;
+}
+
 async function refreshRuns() {
   const [runs, health] = await Promise.all([api("/runs"), fetch("/health").then((r) => r.json())]);
   $("s-active").textContent = health.active.length;
@@ -564,7 +588,7 @@ async function refreshRuns() {
     const cancel = ["queued", "running"].includes(j.status) ? `<button data-cancel="${j.id}">cancel</button>` : "";
     const mode = j.request.mode ?? "observe";
     return `<tr><td class="status ${j.status}">${j.status}</td>` +
-      `<td>${esc(j.request.startUrl)}<span class="mode-tag ${mode}">${esc(mode)}</span></td>` +
+      `<td>${esc(j.request.startUrl)}<span class="mode-tag ${mode}">${esc(mode)}</span>${focusTag(j.request.focus)}</td>` +
       `<td>${o ? o.sessionsRun : "–"}/${j.request.sessions ?? 4}</td><td>${findings}</td><td>${started}</td><td>${report} ${cancel}</td></tr>`;
   }).join("");
 }

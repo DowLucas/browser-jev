@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { candidateActions, explainActionFailure, tamperedUrls, triggerKey } from "../src/actions.ts";
 import { type Config, DEFAULTS, MAX_PARALLEL_SESSIONS, resolveConfig } from "../src/config.ts";
 import { BUILT_IN_PERSONAS, resolvePersonas, validatePersona } from "../src/personas.ts";
+import { describeFocus, focusPathMatches, inFocus, NO_FOCUS, validateFocus } from "../src/focus.ts";
 import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
@@ -206,6 +207,72 @@ describe("url tampering", () => {
     assert.equal(triggerKey({ kind: "goto", url: "http://h/orders/8", tamper: "id 7 -> 8" }), "navigate");
     assert.equal(triggerKey({ kind: "press", key: "Enter", role: "link", name: "Orders", target: "e1" }), "navigate");
     assert.notEqual(triggerKey({ kind: "press", key: "Enter", role: "button", name: "Save", target: "e2" }), "navigate");
+  });
+});
+
+describe("focus", () => {
+  it("matches a path exactly, or it and everything below with /*, never a lookalike prefix", () => {
+    assert.ok(focusPathMatches("/checkout", "/checkout/*"));
+    assert.ok(focusPathMatches("/checkout/shipping/2", "/checkout/*"));
+    assert.ok(!focusPathMatches("/checkout-old", "/checkout/*"));
+    assert.ok(focusPathMatches("/cart", "/cart") && !focusPathMatches("/cart/1", "/cart"));
+  });
+
+  it("keeps a URL in focus when an include matches and no exclude does; no includes means the whole app", () => {
+    const focus = { includePaths: ["/cart", "/checkout/*"], excludePaths: ["/checkout/pay"] };
+    assert.ok(inFocus("http://h/checkout/shipping?x=1", focus));
+    assert.ok(!inFocus("http://h/checkout/pay", focus), "excluded inside an included area");
+    assert.ok(!inFocus("http://h/products", focus));
+    assert.ok(inFocus("http://h/anything", NO_FOCUS));
+    assert.ok(!inFocus("http://h/admin/users", { includePaths: [], excludePaths: ["/admin/*"] }));
+  });
+
+  it("validates a focus and requires the start URL, the entry point, to be inside it", () => {
+    assert.deepEqual(validateFocus(undefined, "http://h/"), NO_FOCUS);
+    assert.deepEqual(validateFocus({ instructions: "  the cart  ", includePaths: ["/cart"] }, "http://h/cart"), {
+      instructions: "the cart",
+      includePaths: ["/cart"],
+      excludePaths: [],
+    });
+    assert.throws(() => validateFocus({ includePaths: ["/checkout/*"] }, "http://h/"), /start URL \/ is outside the focus paths/);
+    assert.throws(() => validateFocus({ excludePaths: ["/"] }, "http://h/"), /outside the focus paths/);
+    assert.throws(() => validateFocus({ includePaths: ["checkout"] }, "http://h/checkout"), /must start with "\/"/);
+    assert.throws(() => validateFocus({ paths: ["/x"] }, "http://h/"), /Unknown focus field/);
+    assert.equal(describeFocus(NO_FOCUS), "none (whole app)");
+    assert.match(describeFocus({ instructions: "cart", includePaths: ["/cart"], excludePaths: [] }), /"cart"; within \/cart/);
+  });
+
+  it("offers no links, revisits or edited URLs outside the focus area", () => {
+    const elements: InteractiveElement[] = [
+      { id: "e0", role: "link", name: "Shipping", href: "http://127.0.0.1/checkout/shipping" },
+      { id: "e1", role: "link", name: "Blog", href: "http://127.0.0.1/blog" },
+      { id: "e2", role: "button", name: "Next" },
+    ];
+    const focus = { includePaths: ["/checkout/*"], excludePaths: [] };
+    const { actions } = candidateActions({
+      elements,
+      currentUrl: "http://127.0.0.1/checkout/7",
+      isInApp: () => true,
+      inFocus: (u) => inFocus(u, focus),
+      canGoForward: false,
+      visited: ["http://127.0.0.1/blog", "http://127.0.0.1/checkout/7"],
+      isForbidden: () => false,
+      maxActions: 100,
+      random: () => 0.3,
+      persona: { name: "x", strategy: "x", traits: ["history", "url-tamper"] },
+    });
+    assert.ok(actions.some((a) => a.name === "Shipping") && actions.some((a) => a.name === "Next"));
+    for (const a of actions) {
+      const url = a.href ?? a.url;
+      if (url) assert.ok(inFocus(url, focus), `${a.kind} ${url} is outside the focus`);
+    }
+    assert.ok(actions.some((a) => a.tamper), "edits inside the area are still offered");
+  });
+
+  it("resolves focus in a config layer", () => {
+    const c = resolveConfig({ startUrl: "http://127.0.0.1/cart", focus: { includePaths: ["/cart"] } });
+    assert.deepEqual(c.focus, { includePaths: ["/cart"], excludePaths: [] });
+    assert.deepEqual(resolveConfig({ startUrl: "http://127.0.0.1/" }).focus, NO_FOCUS);
   });
 });
 

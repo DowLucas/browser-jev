@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { type Focus, NO_FOCUS, validateFocus } from "./focus.ts";
 import { parseArgs } from "node:util";
 import { BUILT_IN_NAMES, BUILT_IN_PERSONAS, type Persona, resolvePersonas } from "./personas.ts";
 import { type Mode, MODES } from "./safety.ts";
@@ -41,6 +42,8 @@ export interface Config {
   useModel: boolean;
   thresholds: Thresholds;
   freeOracleFailOn: FreeCategory[];
+  /** Where to concentrate: instructions for the model, and paths enforced in code. */
+  focus: Focus;
   /** Path to a spec / ticket / PR description; tells the model what is intended. */
   specPath?: string;
   /** Playwright storage state for a throwaway, pre-authenticated test account. */
@@ -105,6 +108,7 @@ export const DEFAULTS: Omit<Config, "startUrl" | "allowedHosts"> = {
   steps: 25,
   personas: [...BUILT_IN_PERSONAS],
   useModel: true,
+  focus: NO_FOCUS,
   thresholds: { warnConfidence: 0.6, warnSeverity: 1, strongConfidence: 0.75, failConfidence: 0.9, failSeverity: 3 },
   freeOracleFailOn: ["page-error", "http-5xx", "crash", "xss-dialog"],
   outDir: "out",
@@ -130,6 +134,10 @@ const USAGE = `Usage: npm run explore -- [options]
   --persona <name>         Persona to use (repeatable): ${BUILT_IN_NAMES.join(", ")},
                            or a name defined under "personas" in the config file
   --no-model               Free oracle only, random exploration, no Jev calls
+  --focus <text>           What to concentrate on, e.g. "the checkout flow: cart, shipping, payment"
+  --focus-path <path>      Stay within this path (repeatable): /cart, or /checkout/* for it and below
+  --exclude-path <path>    Never enter this path (repeatable), same syntax
+                           The start URL is the entry point: sessions return to it when they leave the area
   --spec <file>            Spec / ticket describing intended behavior
   --storage-state <file>   Playwright storage state for the test account
   --baseline <file>        Suppress fingerprints listed in this file
@@ -158,6 +166,9 @@ export async function loadConfig(argv: string[]): Promise<Config> {
       steps: { type: "string" },
       persona: { type: "string", multiple: true },
       "no-model": { type: "boolean" },
+      focus: { type: "string" },
+      "focus-path": { type: "string", multiple: true },
+      "exclude-path": { type: "string", multiple: true },
       spec: { type: "string" },
       "storage-state": { type: "string" },
       baseline: { type: "string" },
@@ -204,6 +215,13 @@ export async function loadConfig(argv: string[]): Promise<Config> {
     confirmDisposable: values["confirm-disposable"],
   });
 
+  // Focus flags refine the file's focus field by field rather than replacing it.
+  const focusFlags = dropUndefined({
+    instructions: values.focus,
+    includePaths: values["focus-path"],
+    excludePaths: values["exclude-path"],
+  });
+  if (Object.keys(focusFlags).length) flags.focus = { ...NO_FOCUS, ...file.focus, ...focusFlags };
   // --persona picks by name, including personas the config file defines inline.
   if (flags.personas && file.personas) {
     const defined = file.personas.filter((p): p is Persona => typeof p !== "string");
@@ -213,7 +231,9 @@ export async function loadConfig(argv: string[]): Promise<Config> {
 }
 
 /** A partial config, where thresholds may also be partial. */
-export type ConfigLayer = Partial<Omit<Config, "thresholds" | "personas">> & {
+export type ConfigLayer = Partial<Omit<Config, "thresholds" | "personas" | "focus">> & {
+  /** Paths may be left out; they default to none. */
+  focus?: Partial<Focus>;
   thresholds?: Partial<Thresholds>;
   /** Built-in names, or full definitions. */
   personas?: (string | Persona)[];
@@ -237,6 +257,7 @@ function validate(layer: ConfigLayer): Config {
   }
   // The start URL's host is always allowed; extra hosts (an API or CDN domain) are added to it.
   cfg.allowedHosts = [...new Set([startHost, ...(cfg.allowedHosts ?? [])])];
+  cfg.focus = validateFocus(layer.focus, cfg.startUrl);
   if (!Array.isArray(layer.personas) || !layer.personas.length) throw new Error("At least one persona is needed");
   cfg.personas = resolvePersonas(layer.personas);
   for (const key of ["sessions", "workers", "steps"] as const) {

@@ -17,6 +17,12 @@ export interface RunSummary {
   inputTokens: number;
   blockedHosts: string[];
   mode: string;
+  /** describeFocus() of the run's focus. */
+  focus: string;
+  /** Distinct pages judged (ids collapsed): inside the focus area when there is one. */
+  pagesCovered: string[];
+  /** Times sessions left the focus area and were returned to the entry page. */
+  focusReturns: number;
   blockedWrites: string[];
   /** Writes that reached the server, with counts. */
   writesSent: Record<string, number>;
@@ -59,6 +65,10 @@ export function renderMarkdown({ summary, groups, suppressed, judgments }: Repor
 - Duration: ${(summary.durationMs / 1000).toFixed(1)}s
 - Blocked off-origin hosts: ${summary.blockedHosts.join(", ") || "none"}
 - Mode: ${summary.mode}
+- Focus: ${summary.focus}
+- Pages covered: ${summary.pagesCovered.length}${listPages(summary.pagesCovered)}${
+    summary.focusReturns ? `\n- Returned to the entry page after leaving the focus area: ${summary.focusReturns}×` : ""
+  }
 - Writes sent to the server: ${listWrites(summary.writesSent)}
 - Writes blocked: ${summary.blockedWrites.length ? summary.blockedWrites.map((w) => `\`${w}\``).join(", ") : "none"}
 - Suppressed by baseline: ${suppressed.length}
@@ -77,6 +87,12 @@ ${calibrationTable(judgments)}
 function listWrites(writes: Record<string, number>): string {
   const entries = Object.entries(writes).sort((a, b) => b[1] - a[1]);
   return entries.length ? entries.map(([w, n]) => `\`${w}\` ×${n}`).join(", ") : "none";
+}
+
+function listPages(pages: readonly string[]): string {
+  if (!pages.length) return "";
+  const shown = [...pages].sort().slice(0, 30).map((p) => `\`${p}\``);
+  return ` (${shown.join(", ")}${pages.length > 30 ? `, and ${pages.length - 30} more` : ""})`;
 }
 
 function renderGroup(g: FindingGroup): string {

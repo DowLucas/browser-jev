@@ -4,6 +4,7 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import type { Browser } from "playwright";
 import type { Config } from "./config.ts";
 import { FindingStore, type FindingGroup } from "./findings.ts";
+import { describeFocus, hasFocus } from "./focus.ts";
 import { type RunSummary, writeOutputs } from "./report.ts";
 import { assertSafeTarget } from "./safety.ts";
 import { consoleLog, type RunLog, runSession, type SessionResult } from "./session.ts";
@@ -65,7 +66,8 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
 
   log.info(
     `Exploring ${cfg.startUrl}: ${cfg.sessions} sessions × ${cfg.steps} steps, up to ${cfg.workers} at once, ` +
-      `${client ? "Jev judgment on" : "free oracle only"}, mode ${describeMode(cfg)}`,
+      `${client ? "Jev judgment on" : "free oracle only"}, mode ${describeMode(cfg)}` +
+      (hasFocus(cfg.focus) ? `, focus ${describeFocus(cfg.focus)}` : ""),
   );
 
   const started = Date.now();
@@ -111,6 +113,9 @@ export async function executeRun(cfg: Config, deps: RunDeps): Promise<RunOutcome
     inputTokens: judgments.reduce((s, j) => s + j.inputTokens, 0),
     blockedHosts: [...new Set(results.flatMap((r) => r.blockedHosts))],
     mode: describeMode(cfg),
+    focus: describeFocus(cfg.focus),
+    pagesCovered: [...new Set(results.flatMap((r) => r.pagesCovered))],
+    focusReturns: results.reduce((s, r) => s + r.focusReturns, 0),
     blockedWrites: [...new Set(results.flatMap((r) => r.blockedWrites))],
     writesSent: sumCounts(results.map((r) => r.writesSent)),
     durationMs: Date.now() - started,
