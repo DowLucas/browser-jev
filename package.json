@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Adversarial browser exploration with Jev as the oracle and navigator",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DowLucas/browser-jev.git"
+  },
+  "homepage": "https://github.com/DowLucas/browser-jev#readme",
+  "bugs": "https://github.com/DowLucas/browser-jev/issues",
   "type": "module",
   "engines": {
     "node": ">=20"

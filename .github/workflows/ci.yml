@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Pull requests (including from forks) only read; the deploy job asks for package writes itself.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Typecheck & tests

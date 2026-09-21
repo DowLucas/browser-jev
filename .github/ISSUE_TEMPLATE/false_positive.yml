@@ -1,0 +1,23 @@
+name: False positive
+description: A reported finding that is not a real bug
+labels: [false-positive]
+body:
+  - type: textarea
+    id: finding
+    attributes:
+      label: The finding
+      description: Category, message, trigger and page from the report.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is not a bug
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: "Mode, agent, focus or setup used. A trace helps, but remove anything private first: traces hold screenshots and page contents."

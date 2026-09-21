@@ -1,10 +1,15 @@
 # browser-jev
 
+[![CI](https://github.com/DowLucas/browser-jev/actions/workflows/ci.yml/badge.svg)](https://github.com/DowLucas/browser-jev/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Adversarial browser exploration. Playwright drives the clicks, but no script decides where they go. Jev decides where to go next and whether each page state looks broken.
 
 Every step makes **one** Jev call. It carries six oracle nouls (broken, count mismatch, untranslated text, confusing, leaks internals, dead end), one severity score and one next-action choice. The state is read once and every question is answered in parallel. Code-only checks run first at no cost.
 
 ## Setup
+
+Needs Node 20 or later. Jev is the model behind the judgments, called through [`@typesafe-ai/sdk`](https://docs.typesafe.ai/sdk/javascript) with a `TYPESAFE_API_KEY`. Without a key, `--no-model` still runs the free checks (errors, crashes, broken requests, layout) with a random explorer, and the test suite needs no key at all.
 
 ```sh
 npm install
@@ -201,3 +206,13 @@ Next actions are sampled from Jev's probability distribution rather than taking 
 - **Visual.** The state is text only, so overlapping elements, z-index, contrast and collapsed layouts are invisible to it. Pair this suite with pixel diffing.
 - **Intent.** Without `--spec`, deliberate redesigns will be flagged.
 - The fill actions use fixed persona input palettes. Jev picks among them but does not write text.
+
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security
+issues privately, as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE)
