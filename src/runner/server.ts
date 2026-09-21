@@ -18,7 +18,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { type Browser, chromium } from "playwright";
-import { MAX_PARALLEL_SESSIONS } from "../config.ts";
+import { DEFAULTS, MAX_PARALLEL_SESSIONS } from "../config.ts";
+import { focusPrompt, parseFocusSuggestion } from "../focus-prompt.ts";
 import { LiveHub } from "../live.ts";
 import { BUILT_IN_NAMES, TRAITS } from "../personas.ts";
 import { executeRun } from "../run.ts";
@@ -275,6 +276,23 @@ export function createHandler(runner: Runner) {
           return (await runner.store.deletePersona(name)) ? send(200, { deleted: name }) : send(404, { error: "no such persona" });
         }
         return send(404, { error: "not found" });
+      }
+
+      // A prompt for Claude Code that writes a run's Focus and setup, and validation of its answer.
+      if (req.method === "POST" && (pathname === "/focus-prompt" || pathname === "/focus-suggestion")) {
+        const body = await readJson<{ startUrl?: unknown; goal?: unknown; text?: unknown }>(req, 200_000);
+        if (typeof body.startUrl !== "string" || !/^https?:\/\//.test(body.startUrl)) throw new RequestError("Enter a start URL (http or https) first");
+        try {
+          new URL(body.startUrl);
+          if (pathname === "/focus-prompt") {
+            if (body.goal !== undefined && typeof body.goal !== "string") throw new Error("goal must be a string");
+            return send(200, { prompt: focusPrompt({ startUrl: body.startUrl, goal: body.goal ?? "", forbiddenPatterns: DEFAULTS.forbiddenPatterns }) });
+          }
+          if (typeof body.text !== "string" || !body.text.trim()) throw new Error("Paste Claude Code's answer first");
+          return send(200, parseFocusSuggestion(body.text, body.startUrl, DEFAULTS.forbiddenPatterns));
+        } catch (err) {
+          throw err instanceof RequestError ? err : new RequestError((err as Error).message);
+        }
       }
 
       if (parts[0] !== "runs") return send(404, { error: "not found" });

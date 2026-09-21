@@ -6,36 +6,127 @@
 <title>Jev Live</title>
 <style>
   :root {
-    --bg: #0e1116; --panel: #161b22; --panel-2: #1c222b; --border: #2a313c;
-    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --bg: #0e1116; --panel: #161b22; --panel-2: #1c222b; --border: #2a313c; --border-strong: #3a4250;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent-soft: rgba(88,166,255,.12);
     --ok: #3fb950; --warn: #d29922; --fail: #f85149;
+    --radius: 10px;
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
-  header {
-    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; background: rgba(14,17,22,.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
-  }
-  h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
-  .dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  .stats { display: flex; gap: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .stats b { color: var(--text); font-weight: 600; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.45; }
+  [hidden] { display: none !important; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .error { color: var(--fail); font-size: 13px; }
   .spacer { flex: 1; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* Header and tabs */
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 10px 24px; background: rgba(14,17,22,.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 16px; margin: 0; letter-spacing: .02em; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 8px; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { background: none; border: none; color: var(--muted); padding: 7px 12px; border-radius: 6px; }
+  .tabs button:hover { color: var(--text); background: var(--panel-2); }
+  .tabs button[aria-selected=true] { color: var(--text); background: var(--panel-2); box-shadow: inset 0 -2px 0 var(--accent); }
+  .stats { display: flex; gap: 14px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--text); font-weight: 600; }
+
+  /* Controls */
   button, .btn {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 12px; font: inherit; cursor: pointer;
+    padding: 7px 14px; font: inherit; cursor: pointer; display: inline-block;
   }
+  button:hover, .btn:hover { border-color: var(--border-strong); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
-  main { padding: 16px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
-  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  button.big { padding: 10px 22px; font-size: 15px; }
+  button.ghost { background: none; border-color: transparent; color: var(--muted); }
+  button.small { padding: 3px 10px; font-size: 12px; }
+  input[type=text], input[type=number], input[type=password], textarea, select {
+    width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px;
+    padding: 9px 11px; font: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea { resize: vertical; line-height: 1.5; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  label, .label { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text); align-content: start; }
+  .hint { display: block; font-size: 12px; font-weight: 400; color: var(--muted); line-height: 1.45; }
+  small { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
+  /* Layout */
+  main { padding: 24px; max-width: 1600px; margin: 0 auto; }
+  section.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 24px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  .panel-head p { margin: 4px 0 0; }
+  .form-panel .panel-head { align-items: center; }
+  .rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--fail); margin-right: 8px; vertical-align: 1px; }
+  h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  h3 { font-size: 14px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 10px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: none; }
+
+  /* New run form */
+  .form-panel { max-width: 980px; margin-left: auto; margin-right: auto; }
+  #run-form { display: grid; gap: 0; }
+  .form-step { padding: 20px 0; border-top: 1px solid var(--border); display: grid; gap: 14px; }
+  .form-step:first-child { border-top: none; padding-top: 4px; }
+  .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 12px; }
+  .optional { font-size: 11px; font-weight: 500; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+  .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+  .fields.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fields .wide { grid-column: 1 / -1; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pills label { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-weight: 500; }
+  .pills label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .pills input { accent-color: var(--accent); margin: 0; }
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details.focus > summary { display: grid; gap: 4px; }
+  details.focus > summary h3::after { content: "▸"; color: var(--muted); margin-left: auto; transition: transform .15s; }
+  details.focus[open] > summary h3::after { transform: rotate(90deg); }
+  details.focus[open] > summary { margin-bottom: 16px; }
+  details.focus > .fields { margin-bottom: 14px; }
+  .callout { border: 1px solid rgba(88,166,255,.35); background: var(--accent-soft); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; }
+  .callout > summary { color: var(--accent); font-weight: 600; }
+  .callout-body { display: grid; gap: 12px; margin-top: 12px; }
+  .modes { display: grid; gap: 8px; }
+  label.mode { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+  label.mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  label.mode.danger-mode:has(input:checked) { border-color: rgba(248,81,73,.6); background: rgba(248,81,73,.08); }
+  label.mode input, label.check input { margin-top: 3px; accent-color: var(--accent); }
+  label.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; }
+  label.danger { display: flex; gap: 10px; align-items: center; color: var(--fail); font-weight: 600; }
+  details.more { padding: 16px 0 4px; border-top: 1px solid var(--border); }
+  details.more > summary { color: var(--muted); font-size: 13px; }
+  details.more > summary::before { content: "▸ "; }
+  details.more[open] > summary::before { content: "▾ "; }
+  details.more[open] > summary { margin-bottom: 14px; }
+  .form-actions {
+    position: sticky; bottom: 0; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    margin: 12px -22px -20px; padding: 14px 22px; background: var(--panel); border-top: 1px solid var(--border);
+    border-radius: 0 0 var(--radius) var(--radius);
+  }
+  .mode-tag { font-size: 11px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+  .mode-tag.interact { color: var(--fail); border-color: rgba(248,81,73,.5); }
+  .status { font-weight: 600; }
+  .status.running { color: var(--accent); } .status.done { color: var(--ok); } .status.queued { color: var(--muted); }
+  .status.failed, .status.cancelled, .status.interrupted { color: var(--warn); }
+
+  /* Live grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; }
   .tile.flagged { border-color: var(--warn); }
   .tile.failing { border-color: var(--fail); }
   .tile.ended { opacity: .55; }
-  .tile-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; }
-  .persona { padding: 2px 8px; border-radius: 999px; font-weight: 600; color: #0b1220; background: var(--muted); }
+  .tile-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; }
+  .persona { padding: 2px 9px; border-radius: 999px; font-weight: 600; color: #0b1220; background: var(--muted); }
   .run { color: var(--muted); font-family: ui-monospace, monospace; }
   .flagcount { color: var(--warn); font-weight: 600; margin-left: auto; }
   .flagcount + .step { margin-left: 8px; }
@@ -45,63 +136,53 @@
   .screen .placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
   .progress { height: 2px; background: var(--border); }
   .progress > div { height: 100%; background: var(--accent); transition: width .3s; }
-  .tile-foot { padding: 8px 10px; display: grid; gap: 4px; font-size: 12px; min-height: 58px; }
+  .tile-foot { padding: 9px 12px; display: grid; gap: 4px; font-size: 12px; min-height: 58px; }
   .url { color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .next { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .flags { display: flex; gap: 4px; flex-wrap: wrap; }
   .flag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(210,153,34,.15); color: var(--warn); border: 1px solid rgba(210,153,34,.4); }
   .flag.fail { background: rgba(248,81,73,.15); color: var(--fail); border-color: rgba(248,81,73,.4); }
-  .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 60px 0; border: 1px dashed var(--border); border-radius: 10px; }
-  section.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
-  form.run-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; align-items: end; }
-  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  input[type=text], input[type=number], input[type=password], textarea {
-    background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit;
-  }
-  .checks { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text); font-size: 13px; }
-  .checks label { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 13px; }
-  .error { color: var(--fail); font-size: 13px; }
-  fieldset.modes { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
-  fieldset.modes legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
-  label.mode { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 13px; }
-  label.mode b { font-weight: 600; }
-  label.danger { display: flex; gap: 8px; align-items: center; color: var(--fail); font-size: 13px; font-weight: 600; }
-  .mode-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
-  .mode-tag.interact { color: var(--fail); border-color: rgba(248,81,73,.5); }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 24px 0 10px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; }
-  .status { font-weight: 600; }
-  .status.running { color: var(--accent); } .status.done { color: var(--ok); } .status.queued { color: var(--muted); }
-  .status.failed, .status.cancelled, .status.interrupted { color: var(--warn); }
-  a { color: var(--accent); }
-  .login { max-width: 360px; margin: 12vh auto; }
-  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
-  .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
-  .muted { color: var(--muted); }
+  .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 36px 16px; border: 1px dashed var(--border); border-radius: var(--radius); }
+
+  /* Agents */
+  .persona-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .persona-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
+  .persona-card .row { justify-content: space-between; }
+  .persona-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tag-builtin { font-size: 11px; color: var(--muted); }
+  form.persona-form { display: grid; gap: 16px; margin-bottom: 20px; padding: 18px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
+  .traits { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px 18px; margin-top: 8px; }
+  .traits label { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; }
+  .traits input { margin-top: 3px; accent-color: var(--accent); }
+
+  /* Logins */
+  .login-new { margin-bottom: 16px; }
+  .login-new input { flex: 1; min-width: 240px; width: auto; }
+
+  /* Sign-in screen and remote browser */
+  .login { max-width: 380px; margin: 12vh auto; padding: 0 16px; }
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 20; display: grid; place-items: center; padding: 16px; }
-  .browser { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(1280px, 100%); display: flex; flex-direction: column; max-height: 100%; }
+  .browser { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); width: min(1280px, 100%); display: flex; flex-direction: column; max-height: 100%; }
   .browser-bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .browser-bar input { width: 170px; }
   .browser-url { flex: 1; min-width: 200px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .browser-screen { position: relative; outline: none; background: #000; overflow: hidden; }
   .browser-screen:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .browser-screen img { display: block; width: 100%; height: auto; cursor: pointer; user-select: none; -webkit-user-drag: none; }
-  .browser-hint { padding: 6px 10px; font-size: 12px; color: var(--muted); }
-  textarea { resize: vertical; min-height: 96px; line-height: 1.45; }
-  .persona-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
-  .persona-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; align-content: start; }
-  .persona-card .row { justify-content: space-between; align-items: center; }
-  .persona-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-  .chip { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); }
-  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
-  .tag-builtin { font-size: 11px; color: var(--muted); }
-  form.persona-form { display: grid; gap: 10px; margin-bottom: 12px; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
-  .traits { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 14px; }
-  .traits label { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 13px; }
-  .traits small { display: block; color: var(--muted); font-size: 12px; }
-  button.small { padding: 3px 9px; font-size: 12px; }
-  [hidden] { display: none !important; }
+  .browser-hint { padding: 7px 12px; font-size: 12px; color: var(--muted); }
+  #record-steps { margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); max-height: 140px; overflow: auto; font-size: 12px; color: var(--text); }
+
+  @media (max-width: 720px) {
+    header { padding: 10px 16px; gap: 10px; }
+    .stats { order: 5; width: 100%; }
+    main { padding: 16px; }
+    section.panel { padding: 16px; }
+    .fields, .fields.three { grid-template-columns: minmax(0, 1fr); }
+    .form-actions { margin: 12px -16px -16px; padding: 12px 16px; }
+    .grid { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>
 </head>
 <body>
@@ -120,101 +201,175 @@
 <div id="app" hidden>
   <header>
     <h1><span class="dot" id="conn"></span>Jev Live</h1>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="runs" aria-selected="true">Runs</button>
+      <button type="button" role="tab" data-tab="agents" aria-selected="false">Agents</button>
+      <button type="button" role="tab" data-tab="logins" aria-selected="false">Saved logins</button>
+    </nav>
+    <div class="spacer"></div>
     <div class="stats">
-      <span><b id="s-sessions">0</b> live sessions</span>
+      <span><b id="s-sessions">0</b> live</span>
       <span><b id="s-active">0</b> running</span>
       <span><b id="s-queued">0</b> queued</span>
       <span>slots <b id="s-slots">0/0</b></span>
     </div>
-    <div class="spacer"></div>
     <button id="toggle-form" class="primary">New run</button>
   </header>
   <main>
-    <section class="panel" id="new-run" hidden>
-      <form class="run-form" id="run-form">
-        <label>Start URL <input type="text" name="startUrl" placeholder="https://staging.example.dev/" required></label>
-        <label>Extra allowed hosts (optional, comma-separated) <input type="text" name="allowedHosts" placeholder="the start URL's domain is always allowed"></label>
-        <label>Saved login (optional) <select name="authState" id="auth-select"><option value="">(none)</option></select></label>
-        <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000"></label>
-        <label>At once (workers, max 10) <input type="number" name="workers" value="4" min="1" max="10"></label>
-        <label>Steps per session <input type="number" name="steps" value="25" min="1" max="500"></label>
-        <div class="checks" style="grid-column:1/-1">
-          <span style="color:var(--muted)">Adversarial agents:</span>
-          <span class="checks" id="persona-checks"><span class="muted">loading…</span></span>
-          <span style="width:16px"></span>
-          <label><input type="checkbox" name="useModel" checked> Jev judgment</label>
-        </div>
-        <fieldset class="modes" style="grid-column:1/-1">
-          <legend>Focus and setup (optional): point the run at one flow or area</legend>
-          <label>What to concentrate on. Every agent gets this with its own instructions.
-            <textarea name="focusInstructions" maxlength="2000" style="min-height:60px"
-              placeholder="The checkout flow: cart, shipping address, delivery options and the order summary. Quantities, discount codes and totals matter most."></textarea></label>
-          <div class="row" style="align-items:start">
-            <label style="flex:1;min-width:240px">Stay within these paths (comma-separated; exact, or ending in /* for it and below)
-              <input type="text" name="focusPaths" placeholder="/cart, /checkout/*"></label>
-            <label style="flex:1;min-width:240px">Never enter these paths
-              <input type="text" name="excludePaths" placeholder="/checkout/pay"></label>
+   <div class="view" data-view="runs">
+    <section class="panel form-panel" id="new-run" hidden>
+      <div class="panel-head">
+        <h2>New run</h2>
+        <button type="button" class="ghost" id="close-form" aria-label="Close the new run form">✕</button>
+      </div>
+      <form id="run-form">
+        <section class="form-step">
+          <h3><span class="num">1</span>Target</h3>
+          <div class="fields">
+            <label class="wide">Start URL
+              <select id="start-select"><option value="__new">+ Add new URL…</option></select>
+              <input type="text" name="startUrl" id="start-url" placeholder="https://staging.example.dev/" required>
+              <span class="hint">Where every session starts. Earlier runs' URLs are listed, most used first.</span></label>
+            <label>Saved login
+              <select name="authState" id="auth-select"><option value="">(none)</option></select>
+              <span class="hint">Start signed in. Add one under Saved logins.</span></label>
           </div>
-          <span class="muted" style="font-size:12px">The start URL is the entry point: it must be inside the paths, and sessions return to it when they leave the area.</span>
-          <label>Setup steps, replayed before each session to reach state first (one per line: goto, click, fill, select, press, wait for, back)
-            <textarea name="setup" spellcheck="false" style="font-family:ui-monospace,monospace;font-size:12px;min-height:80px"
-              placeholder='goto /products/3&#10;click button "Add to cart"&#10;wait for "Added to cart"'></textarea></label>
-          <div class="row" style="align-items:center">
-            <button type="button" id="setup-record">Record steps…</button>
-            <span class="muted" style="font-size:12px">Opens the start URL (signed in with the saved login, if one is picked). What you click and type becomes steps. Recording uses a real browser: what you do there reaches the site.</span>
+        </section>
+
+        <section class="form-step">
+          <h3><span class="num">2</span>Size</h3>
+          <div class="fields three">
+            <label>Sessions <input type="number" name="sessions" value="8" min="1" max="1000">
+              <span class="hint">Agents take turns across them</span></label>
+            <label>At once <input type="number" name="workers" value="4" min="1" max="10">
+              <span class="hint">At most 10</span></label>
+            <label>Steps per session <input type="number" name="steps" value="25" min="1" max="500">
+              <span class="hint">One model call each</span></label>
           </div>
-        </fieldset>
-        <fieldset class="modes" style="grid-column:1/-1">
-          <legend>Mode: what may reach the server</legend>
-          <label class="mode"><input type="radio" name="mode" value="observe" checked>
-            <span><b>Observe</b>: clicks, types and submits, but only page loads and reads reach the server. Safe on live sites.</span></label>
-          <label class="mode"><input type="radio" name="mode" value="observe-writes">
-            <span><b>Observe + allowed writes</b>: as Observe, plus writes to the paths you list. For apps that load data with POST requests.</span></label>
-          <label class="mode"><input type="radio" name="mode" value="interact">
-            <span><b>Interact</b>: every submission goes through for real: orders, messages, sign-ups. Disposable environments only.</span></label>
-          <label id="write-paths" hidden>Allowed write paths (comma-separated; exact, or ending in /* for everything below)
-            <input type="text" name="allowedWritePaths" placeholder="/entity, /search, /api/*"></label>
+        </section>
+
+        <section class="form-step">
+          <h3><span class="num">3</span>Agents</h3>
+          <div class="pills" id="persona-checks"><span class="muted">loading…</span></div>
+          <span class="hint">Edit them or add your own under Agents.</span>
+        </section>
+
+        <section class="form-step">
+          <details class="focus" id="focus-section">
+            <summary><h3><span class="num">4</span>Focus and setup <span class="optional">optional</span></h3>
+              <span class="hint">Point the run at one flow or area, and create the state it needs first.</span></summary>
+
+            <details class="callout" id="cc-helper">
+              <summary>Let Claude Code write this section</summary>
+              <div class="callout-body">
+                <label>What do you want to test?
+                  <input type="text" id="cc-goal" placeholder="Checkout with a discount code, from cart to order summary"></label>
+                <div class="row">
+                  <button type="button" id="cc-copy">Copy prompt for Claude Code</button>
+                  <span class="hint" id="cc-copied">Uses the start URL. Paste it into Claude Code, opened in the app's repository: it reads the routes and the exact button and field names.</span>
+                </div>
+                <textarea id="cc-prompt" class="mono" readonly hidden spellcheck="false" rows="8"></textarea>
+                <label>Paste Claude Code's answer (the whole reply is fine)
+                  <textarea id="cc-answer" class="mono" spellcheck="false" rows="4" placeholder='```json&#10;{ "instructions": "...", "includePaths": ["/cart", "/checkout/*"], ... }&#10;```'></textarea></label>
+                <div class="row">
+                  <button type="button" id="cc-apply">Apply to the form</button>
+                  <span id="cc-status" class="hint"></span>
+                </div>
+              </div>
+            </details>
+
+            <div class="fields">
+              <label class="wide">What to concentrate on
+                <textarea name="focusInstructions" maxlength="2000" rows="3"
+                  placeholder="The checkout flow: cart, shipping address, delivery options and the order summary. Quantities, discount codes and totals matter most."></textarea>
+                <span class="hint">Every agent gets this alongside its own instructions.</span></label>
+              <label>Stay within these paths
+                <input type="text" name="focusPaths" placeholder="/cart, /checkout/*">
+                <span class="hint">Comma-separated. Exact, or ending in /* for it and everything below. The start URL must be inside.</span></label>
+              <label>Never enter these paths
+                <input type="text" name="excludePaths" placeholder="/checkout/pay">
+                <span class="hint">Even inside the paths above.</span></label>
+              <label class="wide">Setup steps
+                <textarea name="setup" class="mono" spellcheck="false" rows="4"
+                  placeholder='goto /products/3&#10;click button "Add to cart"&#10;wait for "Added to cart"'></textarea>
+                <span class="hint">Replayed before each session to reach state first. One per line: goto, click, fill, select, press, wait for, back.</span></label>
+            </div>
+            <div class="row">
+              <button type="button" id="setup-record"><span class="rec-dot"></span>Record steps…</button>
+              <span class="hint">Opens the start URL in a live browser, signed in with the saved login if one is picked. What you click and type becomes steps. What you do there reaches the site.</span>
+            </div>
+          </details>
+        </section>
+
+        <section class="form-step">
+          <h3><span class="num">5</span>What may reach the server</h3>
+          <div class="modes">
+            <label class="mode"><input type="radio" name="mode" value="observe" checked>
+              <span><b>Observe</b><small>Clicks, types and submits, but only page loads and reads reach the server. Safe on live sites.</small></span></label>
+            <label class="mode"><input type="radio" name="mode" value="observe-writes">
+              <span><b>Observe + allowed writes</b><small>Also writes to the paths you list. For apps that load data with POST, or setups that must write.</small></span></label>
+            <label class="mode danger-mode"><input type="radio" name="mode" value="interact">
+              <span><b>Interact</b><small>Every submission goes through for real: orders, messages, sign-ups. Disposable environments only.</small></span></label>
+          </div>
+          <label id="write-paths" hidden>Allowed write paths
+            <input type="text" name="allowedWritePaths" placeholder="/entity, /search, /api/*">
+            <span class="hint">Comma-separated. Exact, or ending in /* for everything below.</span></label>
           <label id="confirm" class="danger" hidden><input type="checkbox" name="confirmDisposable">
             I confirm this is a disposable environment: this run will change data on it.</label>
-        </fieldset>
-        <div style="display:flex;gap:10px;align-items:center;grid-column:1/-1">
-          <button class="primary">Start run</button>
+        </section>
+
+        <details class="more">
+          <summary>More options</summary>
+          <div class="fields">
+            <label>Extra allowed hosts
+              <input type="text" name="allowedHosts" placeholder="api.staging.example.dev">
+              <span class="hint">Comma-separated, e.g. an API or CDN domain. The start URL's host is always allowed.</span></label>
+            <label class="check"><input type="checkbox" name="useModel" checked>
+              <span>Jev judgment<small>Off: free checks only (errors, crashes, broken requests), random clicking, no model cost.</small></span></label>
+          </div>
+        </details>
+
+        <div class="form-actions">
+          <button class="primary big">Start run</button>
           <span class="error" id="run-error"></span>
         </div>
       </form>
     </section>
 
-    <section class="panel" id="logins-panel">
-      <div class="row" style="justify-content:space-between;margin-bottom:10px">
-        <h2 style="margin:0">Saved logins</h2>
-        <div class="row">
-          <input type="text" id="login-url" placeholder="https://app.example.dev/login" style="min-width:280px">
-          <button class="primary" id="login-start">Log in to a site…</button>
-          <label class="btn" style="display:inline-block;cursor:pointer">Upload session file<input type="file" id="login-upload" accept="application/json" hidden></label>
-        </div>
-      </div>
-      <table>
-        <thead><tr><th>Name</th><th>Sites</th><th>Cookies</th><th>Valid until</th><th>Saved</th><th></th></tr></thead>
-        <tbody id="auth-states"><tr><td colspan="6" class="muted">No saved logins yet.</td></tr></tbody>
-      </table>
-      <div class="error" id="logins-error"></div>
-    </section>
+    <div class="grid" id="grid"><div class="empty" id="empty">No sessions running. Start a run to watch the browsers here.</div></div>
 
+    <section class="panel">
+      <div class="panel-head"><h2>Recent runs</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Target</th><th>Sessions</th><th>Findings</th><th>Started</th><th></th></tr></thead>
+          <tbody id="runs"></tbody>
+        </table>
+      </div>
+    </section>
+   </div>
+
+   <div class="view" data-view="agents" hidden>
     <section class="panel" id="personas-panel">
-      <div class="row" style="justify-content:space-between;margin-bottom:10px">
-        <h2 style="margin:0">Adversarial agents</h2>
+      <div class="panel-head">
+        <div>
+          <h2>Adversarial agents</h2>
+          <p class="hint">Each session runs as one agent. Instructions steer what it picks; behaviours decide which actions it has.</p>
+        </div>
         <div class="row">
           <button id="persona-restore" title="Reset edited built-in agents and bring back deleted ones; your own agents stay">Restore built-ins</button>
           <button class="primary" id="persona-new">New agent</button>
         </div>
       </div>
       <form class="persona-form" id="persona-form" hidden>
-        <label>Name (lowercase letters, digits and dashes)
-          <input type="text" name="name" required maxlength="32" pattern="[a-z0-9][a-z0-9\-]*" placeholder="checkout-hunter"></label>
-        <label>Instructions: who this agent is and what it hunts for. Sent to Jev at every step.
-          <textarea name="strategy" required maxlength="2000" placeholder="You go straight for the checkout flow. You change quantities after adding to cart, apply and remove discount codes, and hunt for totals that do not add up."></textarea></label>
+        <label>Name
+          <input type="text" name="name" required maxlength="32" pattern="[a-z0-9][a-z0-9\-]*" placeholder="checkout-hunter">
+          <span class="hint">Lowercase letters, digits and dashes.</span></label>
+        <label>Instructions
+          <textarea name="strategy" required maxlength="2000" rows="4" placeholder="You go straight for the checkout flow. You change quantities after adding to cart, apply and remove discount codes, and hunt for totals that do not add up."></textarea>
+          <span class="hint">Who this agent is and what it hunts for. Sent to Jev at every step.</span></label>
         <div>
-          <div class="muted" style="font-size:12px;margin-bottom:6px">Behaviours: extra actions this agent gets besides clicking, plain typing, back and reload</div>
+          <div class="label">Behaviours <span class="hint">Extra actions besides clicking, plain typing, back and reload</span></div>
           <div class="traits" id="persona-traits"></div>
         </div>
         <div class="row">
@@ -226,8 +381,30 @@
       <div class="persona-list" id="persona-list"></div>
       <div class="error" id="personas-error"></div>
     </section>
+   </div>
 
-    <div class="grid" id="grid"><div class="empty" id="empty">No sessions running. Start a run to watch the browsers here.</div></div>
+   <div class="view" data-view="logins" hidden>
+    <section class="panel" id="logins-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Saved logins</h2>
+          <p class="hint">Runs can start signed in. Use a throwaway test account, never a real one. Cookie values never leave the runner.</p>
+        </div>
+      </div>
+      <div class="row login-new">
+        <input type="text" id="login-url" placeholder="https://app.example.dev/login">
+        <button class="primary" id="login-start">Log in to a site…</button>
+        <label class="btn">Upload session file<input type="file" id="login-upload" accept="application/json" hidden></label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Sites</th><th>Cookies</th><th>Valid until</th><th>Saved</th><th></th></tr></thead>
+          <tbody id="auth-states"><tr><td colspan="6" class="muted">No saved logins yet.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="error" id="logins-error"></div>
+    </section>
+   </div>
 
     <div class="overlay" id="login-window" hidden>
       <div class="browser">
@@ -241,15 +418,9 @@
         </div>
         <div class="browser-screen" id="login-screen" tabindex="0"><img id="login-img" alt="Remote login browser"></div>
         <div class="browser-hint" id="login-hint">Click the screen, then type as usual. Enter, Tab, Backspace, arrows and paste work; scroll with the mouse wheel. When you are signed in, name the login and save it.</div>
-        <pre id="record-steps" hidden style="margin:0;padding:8px 10px;border-top:1px solid var(--border);max-height:140px;overflow:auto;font-size:12px;color:var(--text)"></pre>
+        <pre id="record-steps" hidden></pre>
       </div>
     </div>
-
-    <h2>Recent runs</h2>
-    <table>
-      <thead><tr><th>Status</th><th>Target</th><th>Sessions</th><th>Findings</th><th>Started</th><th></th></tr></thead>
-      <tbody id="runs"></tbody>
-    </table>
   </main>
 </div>
 
@@ -275,7 +446,24 @@ $("login-form").addEventListener("submit", async (e) => {
   location.reload();
 });
 
-$("toggle-form").addEventListener("click", () => { $("new-run").hidden = !$("new-run").hidden; });
+// --- Tabs: Runs, Agents, Saved logins; the hash keeps the tab across reloads -----------------------
+
+function showTab(name) {
+  if (!document.querySelector(`.view[data-view="${name}"]`)) name = "runs";
+  for (const v of document.querySelectorAll(".view")) v.hidden = v.dataset.view !== name;
+  for (const t of document.querySelectorAll("[data-tab]")) t.setAttribute("aria-selected", String(t.dataset.tab === name));
+  if (location.hash.slice(1) !== name) history.replaceState(null, "", name === "runs" ? location.pathname : `#${name}`);
+}
+for (const t of document.querySelectorAll("[data-tab]")) t.addEventListener("click", () => showTab(t.dataset.tab));
+showTab(location.hash.slice(1));
+
+function openRunForm() {
+  showTab("runs");
+  $("new-run").hidden = false;
+  $("new-run").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("toggle-form").addEventListener("click", () => ($("new-run").hidden ? openRunForm() : ($("new-run").hidden = true)));
+$("close-form").addEventListener("click", () => { $("new-run").hidden = true; });
 
 // Show only what the chosen mode needs.
 document.querySelectorAll("input[name=mode]").forEach((radio) =>
@@ -313,7 +501,12 @@ $("run-form").addEventListener("submit", async (e) => {
   try {
     await api("/runs", { method: "POST", body: JSON.stringify(request) });
     $("new-run").hidden = true;
-    refreshRuns();
+    await refreshRuns();
+    // A URL just added is in the list now; select it so the next run starts from it too.
+    if ([...$("start-select").options].some((o) => o.value === request.startUrl)) {
+      $("start-select").value = request.startUrl;
+      onStartSelect(false);
+    }
   } catch (err) { $("run-error").textContent = err.message; }
 });
 
@@ -568,6 +761,7 @@ $("record-use").addEventListener("click", async () => {
   try {
     const { steps } = await api(`/logins/${id}/steps`);
     $("run-form").elements.namedItem("setup").value = steps;
+    $("focus-section").open = true;
     closeLoginWindow();
     await api(`/logins/${id}`, { method: "DELETE" }).catch(() => {});
   } catch (err) { $("login-current-url").textContent = err.message; }
@@ -622,11 +816,109 @@ function focusTag(focus) {
   return `<span class="mode-tag" title="${esc(title)}">focus</span>`;
 }
 
+// --- Claude Code helper: a prompt that writes the Focus section, and applying its answer -----------
+
+const formField = (name) => $("run-form").elements.namedItem(name);
+
+$("cc-copy").addEventListener("click", async () => {
+  const startUrl = $("start-url").value.trim();
+  try {
+    const { prompt } = await api("/focus-prompt", { method: "POST", body: JSON.stringify({ startUrl, goal: $("cc-goal").value }) });
+    const box = $("cc-prompt");
+    box.value = prompt;
+    box.hidden = false;
+    // The clipboard API needs a secure context; fall back to a selected box to copy by hand.
+    const copied = await navigator.clipboard?.writeText(prompt).then(() => true, () => false);
+    if (!copied) { box.focus(); box.select(); }
+    $("cc-copied").textContent = copied
+      ? "Copied. Paste it into Claude Code, opened in the app's repository."
+      : "Select-all and copy the prompt below (the browser blocked automatic copying).";
+  } catch (err) { $("cc-copied").textContent = err.message; }
+});
+
+$("cc-apply").addEventListener("click", async () => {
+  const status = $("cc-status");
+  status.className = "";
+  try {
+    const s = await api("/focus-suggestion", {
+      method: "POST",
+      body: JSON.stringify({ startUrl: $("start-url").value.trim(), text: $("cc-answer").value }),
+    });
+    if (s.startUrl) {
+      const select = $("start-select");
+      const known = [...select.options].some((o) => o.value === s.startUrl);
+      select.value = known ? s.startUrl : NEW_URL;
+      $("start-url").value = s.startUrl;
+      $("start-url").hidden = known;
+    }
+    formField("focusInstructions").value = s.instructions ?? "";
+    formField("focusPaths").value = s.includePaths.join(", ");
+    formField("excludePaths").value = s.excludePaths.join(", ");
+    formField("setup").value = s.setup ? `${s.setup}\n` : "";
+    const changed = [];
+    if (s.allowedWritePaths.length) {
+      formField("allowedWritePaths").value = s.allowedWritePaths.join(", ");
+      // Only ever widen observe to observe-writes; never touch interact.
+      const mode = document.querySelector("input[name=mode]:checked");
+      if (mode.value === "observe") {
+        const writes = document.querySelector("input[name=mode][value=observe-writes]");
+        writes.checked = true;
+        writes.dispatchEvent(new Event("change"));
+        changed.push(`mode set to Observe + allowed writes for ${s.allowedWritePaths.join(", ")}`);
+      }
+    }
+    $("focus-section").open = true;
+    status.textContent = `Applied${changed.length ? `; ${changed.join("; ")}` : ""}. Review the fields before starting.` +
+      (s.notes ? ` Claude Code notes: ${s.notes}` : "");
+  } catch (err) {
+    status.className = "error";
+    status.textContent = err.message;
+  }
+});
+
+// --- Start URL picker: URLs from earlier runs, most used first --------------------------------------
+
+const NEW_URL = "__new";
+let knownUrls = "";
+
+/** Rebuild the picker only when the set of URLs changes, so the 3-second refresh never fights a choice. */
+function refreshStartUrls(runs) {
+  const uses = new Map();
+  for (const j of runs) {
+    const u = uses.get(j.request.startUrl) ?? { count: 0, last: "" };
+    uses.set(j.request.startUrl, { count: u.count + 1, last: j.createdAt > u.last ? j.createdAt : u.last });
+  }
+  const urls = [...uses].sort(([, a], [, b]) => b.count - a.count || b.last.localeCompare(a.last)).map(([u]) => u);
+  if (urls.join("\n") === knownUrls) return;
+  const first = !knownUrls;
+  knownUrls = urls.join("\n");
+  const select = $("start-select");
+  const current = select.value;
+  select.innerHTML = urls.map((u) => `<option value="${esc(u)}">${esc(u)}</option>`).join("") +
+    `<option value="${NEW_URL}">+ Add new URL…</option>`;
+  // First load: preselect the most used URL. Later: keep what the user picked, including "add new".
+  select.value = first ? (urls[0] ?? NEW_URL) : urls.includes(current) || current === NEW_URL ? current : urls[0] ?? NEW_URL;
+  onStartSelect(false);
+}
+
+function onStartSelect(focus = true) {
+  const select = $("start-select");
+  const input = $("start-url");
+  const adding = select.value === NEW_URL;
+  // The text field stays the form's value either way; it is only shown when adding a URL.
+  if (!adding) input.value = select.value;
+  else if (select.options.length > 1 && [...select.options].some((o) => o.value === input.value)) input.value = "";
+  input.hidden = !adding;
+  if (adding && focus) input.focus();
+}
+$("start-select").addEventListener("change", () => onStartSelect());
+
 async function refreshRuns() {
   const [runs, health] = await Promise.all([api("/runs"), fetch("/health").then((r) => r.json())]);
   $("s-active").textContent = health.active.length;
   $("s-queued").textContent = health.queued;
   $("s-slots").textContent = `${health.slotsInUse}/${health.capacity}`;
+  refreshStartUrls(runs);
   $("runs").innerHTML = runs.slice(0, 15).map((j) => {
     const o = j.outcome;
     const findings = o ? `${o.failing} failing · ${o.warnings} warnings` : "–";

@@ -80,6 +80,10 @@ npm run explore -- --url https://staging.example.dev/cart --focus "Checkout: qua
 
 In the runner UI it is the *Focus and setup* section of the *New run* form. In the API it is `"focus": {"instructions", "includePaths", "excludePaths"}`.
 
+### Let Claude Code write the Focus section
+
+In the runner UI, *Focus and setup → Let Claude Code write this section* builds a prompt from what you want to test and the start URL. Paste it into Claude Code, opened in the app's repository: it reads the routes and the exact button and field names that setup steps must match, and answers with one JSON block. Paste the whole reply back and *Apply to the form*. The answer is checked with the same rules a run uses (setup syntax, focus paths, forbidden controls, same site) before it fills anything. If the setup needs writes, the mode is widened from Observe to Observe + allowed writes for exactly those paths, never further. API: `POST /focus-prompt {startUrl, goal}` and `POST /focus-suggestion {startUrl, text}`.
+
 ### Setup steps: reach the state first
 
 Some flows need state before there is anything to test, for example an item in the cart. Setup steps run before each session. Then the session goes to the start URL and explores from there. There is one step per line. Targets are found by role and accessible name, like the explorer finds them, so restyling does not break them:

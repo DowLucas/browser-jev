@@ -146,6 +146,21 @@ describe("runner service", () => {
     assert.match(report.summary.focus, /The product catalogue/);
   });
 
+  it("serves the Claude Code focus prompt and validates a pasted answer", async () => {
+    const startUrl = `http://127.0.0.1:${DEMO_PORT}/account`;
+    const { status, body } = await api("/focus-prompt", { method: "POST", body: JSON.stringify({ startUrl, goal: "the account page" }) });
+    assert.equal(status, 200);
+    assert.match(body.prompt, /the account page/);
+    const text = '```json\n{"includePaths": ["/account"], "setup": ["goto /login"], "allowedWritePaths": ["/login"]}\n```';
+    const ok = await api("/focus-suggestion", { method: "POST", body: JSON.stringify({ startUrl, text }) });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepEqual(ok.body.includePaths, ["/account"]);
+    const bad = await api("/focus-suggestion", { method: "POST", body: JSON.stringify({ startUrl, text: '{"includePaths": ["/orders/*"]}' }) });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /outside the focus paths/);
+    assert.equal((await api("/focus-prompt", { method: "POST", body: JSON.stringify({ goal: "x" }) })).status, 400);
+  });
+
   const signIn = 'goto /login\nfill "Username" with "tester"\nfill "Password" with "hunter2"\nclick button "Sign in"\nwait for "Signed in as tester."';
   const setupRun = (extra: object) =>
     submit({ ...demoRun, startUrl: `http://127.0.0.1:${DEMO_PORT}/account`, steps: 2, sessions: 1, setup: signIn, focus: { includePaths: ["/account"] }, ...extra });

@@ -5,6 +5,7 @@ import { type Config, DEFAULTS, MAX_PARALLEL_SESSIONS, resolveConfig } from "../
 import { BUILT_IN_PERSONAS, resolvePersonas, validatePersona } from "../src/personas.ts";
 import { describeFocus, focusPathMatches, inFocus, NO_FOCUS, validateFocus } from "../src/focus.ts";
 import { formatStep, parseSetup } from "../src/setup.ts";
+import { focusPrompt, parseFocusSuggestion } from "../src/focus-prompt.ts";
 import { FindingStore, fingerprint, normalizePath, normalizeRequestPath, type Finding } from "../src/findings.ts";
 import { classifyJudgment, type Judgment } from "../src/judge.ts";
 import type { InteractiveElement } from "../src/page-model.ts";
@@ -334,6 +335,54 @@ describe("setup steps", () => {
     assert.throws(() => resolveConfig({ ...base, setup: "goto https://evil.test/" }), /leaves the allowed hosts/);
     assert.throws(() => resolveConfig({ ...base, setup: 'click button "Proceed to checkout"' }), /forbidden-control pattern/);
     assert.throws(() => resolveConfig({ ...base, setup: "goto /account/delete" }), /forbidden-control pattern/);
+  });
+});
+
+describe("Claude Code focus prompt", () => {
+  const start = "https://staging.example.dev/cart";
+  const answer = (obj: object, prose = "Here is the focus:\n\n") => `${prose}\`\`\`json\n${JSON.stringify(obj, null, 2)}\n\`\`\`\n`;
+  const good = {
+    startUrl: "/cart",
+    instructions: "Cart totals after quantity changes and discount codes.",
+    includePaths: ["/cart", "/checkout/*"],
+    excludePaths: ["/checkout/pay"],
+    setup: ["goto /products/3", 'click button "Add to cart"', 'wait for "Added to cart"'],
+    allowedWritePaths: ["/api/cart/*"],
+    notes: "Needs no login.",
+  };
+
+  it("carries the goal, the start URL, the step grammar and the forbidden patterns", () => {
+    const prompt = focusPrompt({ startUrl: start, goal: "discount codes", forbiddenPatterns: DEFAULTS.forbiddenPatterns });
+    for (const part of ["discount codes", start, 'click <role> "<accessible name>"', "checkout", "staging.example.dev", "```json"]) {
+      assert.ok(prompt.includes(part), part);
+    }
+    assert.match(focusPrompt({ startUrl: start, goal: " ", forbiddenPatterns: [] }), /ask me what flow/);
+  });
+
+  it("takes the JSON out of a whole reply and normalizes it", () => {
+    const s = parseFocusSuggestion(answer(good), start, DEFAULTS.forbiddenPatterns);
+    assert.equal(s.startUrl, start);
+    assert.deepEqual(s.includePaths, ["/cart", "/checkout/*"]);
+    assert.equal(s.setup, 'goto /products/3\nclick button "Add to cart"\nwait for "Added to cart"');
+    assert.deepEqual(s.allowedWritePaths, ["/api/cart/*"]);
+    assert.equal(s.notes, "Needs no login.");
+    // Bare JSON, setup as one string, no startUrl: the current start URL stays.
+    const bare = parseFocusSuggestion(JSON.stringify({ ...good, startUrl: undefined, setup: "goto /products/3" }), start, []);
+    assert.equal(bare.startUrl, undefined);
+    assert.equal(bare.setup, "goto /products/3");
+  });
+
+  it("rejects an answer a run would reject, with the reason", () => {
+    const bad: [object, RegExp][] = [
+      [{ ...good, startUrl: "https://other.test/cart" }, /another site/],
+      [{ ...good, includePaths: ["/checkout/*"] }, /start URL \/cart is outside the focus paths/],
+      [{ ...good, setup: ['click button "Proceed to checkout"'] }, /forbidden-control pattern/],
+      [{ ...good, setup: ["clik"] }, /Setup line 1/],
+      [{ ...good, includePaths: "/cart" }, /"includePaths" must be a list/],
+      [{ ...good, allowedWritePaths: ["api/cart"] }, /must start with "\/"/],
+    ];
+    for (const [obj, error] of bad) assert.throws(() => parseFocusSuggestion(answer(obj), start, DEFAULTS.forbiddenPatterns), error);
+    assert.throws(() => parseFocusSuggestion("I could not find the flow.", start, []), /No JSON object found/);
   });
 });
 
